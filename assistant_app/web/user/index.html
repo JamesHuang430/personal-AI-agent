@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>知伴 · 私人 AI 助理</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="auth-view" class="auth-shell">
+    <section class="auth-visual">
+      <div class="brand brand-light"><span class="brand-mark">知</span><span>知伴 AI</span></div>
+      <div class="hero-copy">
+        <p class="eyebrow">YOUR PERSONAL INTELLIGENCE</p>
+        <h1>把琐事交给 AI，<br>把时间留给自己。</h1>
+        <p>一个会成长的私人助理，帮你规划、检索、整理知识，也陪你聊聊天。</p>
+        <div class="hero-chips"><span>行程规划</span><span>知识问答</span><span>文档理解</span></div>
+      </div>
+      <div class="orb orb-one"></div><div class="orb orb-two"></div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="mobile-brand brand"><span class="brand-mark">知</span><span>知伴 AI</span></div>
+        <p class="eyebrow purple">WELCOME BACK</p>
+        <h2 id="auth-title">登录你的助理</h2>
+        <p id="auth-subtitle" class="muted">继续上次的对话和计划</p>
+        <div class="auth-tabs" role="tablist">
+          <button id="login-tab" class="active" type="button">登录</button>
+          <button id="register-tab" type="button">注册</button>
+        </div>
+        <form id="auth-form">
+          <label>邮箱<input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label>
+          <label>密码<input id="password" name="password" type="password" autocomplete="current-password" placeholder="至少 8 个字符" minlength="8" required></label>
+          <p id="register-tip" class="form-tip hidden">每日开放 3 个注册名额，注册成功后即可登录。</p>
+          <button id="auth-submit" class="primary-btn wide" type="submit">进入知伴</button>
+        </form>
+        <p class="agreement">登录或注册即表示你同意合理使用服务，AI 内容请注意核验。</p>
+      </div>
+    </section>
+  </div>
+
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">知</span><span>知伴 AI</span></div>
+      <button id="new-chat" class="new-chat" type="button">＋ 新建对话</button>
+      <p class="section-label">最近对话</p>
+      <div id="history-list" class="history-list">
+        <button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>
+      </div>
+      <div class="sidebar-footer"><span class="status-dot"></span> 服务运行正常</div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button id="mobile-menu" class="icon-btn mobile-only" type="button">☰</button>
+        <div><strong>私人 AI 助理</strong><span class="version">v0.2</span></div>
+        <div class="top-actions">
+          <button id="points-btn" class="points-pill" type="button">◆ <span id="points-value">0</span> 积分</button>
+          <button id="checkin-btn" class="outline-btn" type="button">签到 +100</button>
+          <div class="profile-wrap">
+            <button id="profile-btn" class="avatar" type="button">U</button>
+            <div id="profile-menu" class="profile-menu hidden">
+              <p id="profile-email"></p>
+              <button id="logout-btn" type="button">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="chat-area">
+        <div id="messages" class="messages">
+          <div class="welcome-block">
+            <div class="assistant-logo">知</div>
+            <h2>你好，我是知伴</h2>
+            <p>今天想让我帮你做什么？</p>
+            <div class="prompt-grid">
+              <button type="button" data-prompt="帮我规划一个三天两夜的周末旅行">🧭 规划一次周末旅行</button>
+              <button type="button" data-prompt="帮我整理今天最重要的三件事">✓ 整理今日待办</button>
+              <button type="button" data-prompt="给我讲一个轻松有趣的笑话">☺ 讲个笑话放松一下</button>
+              <button type="button" data-prompt="介绍一下你目前能帮助我做什么">✦ 了解你的能力</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <p id="model-status" class="model-status">由运营后台当前启用的大模型渠道提供回答</p>
+          <form id="chat-form" class="composer">
+            <textarea id="chat-input" rows="1" maxlength="8000" placeholder="问我任何事情，Enter 发送，Shift + Enter 换行"></textarea>
+            <button id="send-btn" type="submit" aria-label="发送">↑</button>
+          </form>
+          <p class="ai-note">AI 生成内容仅供参考，请核验重要信息</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="packages-dialog" class="modal">
+    <div class="modal-header"><div><p class="eyebrow purple">POINTS CENTER</p><h2>积分套餐</h2></div><button class="close-btn" type="button">×</button></div>
+    <p class="muted">基础兑换比例为 1 元 = 100 积分，套餐包含额外赠送积分。</p>
+    <div id="package-list" class="package-list"></div>
+    <p class="payment-note">在线支付将在接入支付渠道后开放，当前可由运营人员调整积分。</p>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

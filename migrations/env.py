@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import assistant_app.db.models  # noqa: F401
 from assistant_app.core.config import get_settings
 from assistant_app.db.base import Base
 
@@ -54,4 +55,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

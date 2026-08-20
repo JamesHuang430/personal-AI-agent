@@ -24,7 +24,7 @@ COPY migrations ./migrations
 RUN python -m pip install .
 
 USER assistant
-EXPOSE 8000
+EXPOSE 8000 19000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=3)"]

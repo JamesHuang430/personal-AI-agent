@@ -1,2 +1,1 @@
 """Provider-neutral domain contracts."""
-

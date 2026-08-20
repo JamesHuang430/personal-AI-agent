@@ -11,15 +11,18 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.16,<2",
     "asyncpg>=0.30,<1",
+    "cryptography>=45,<47",
     "fastapi>=0.116,<1",
+    "openai>=3.2,<4",
     "pydantic-settings>=2.10,<3",
     "redis>=6.4,<8",
     "sqlalchemy[asyncio]>=2.0.43,<3",
+    "tzdata>=2025.2",
     "uvicorn[standard]>=0.35,<1",
 ]
 
 [project.optional-dependencies]
-model = ["openai>=3.2,<4"]
+model = []
 dev = [
     "httpx>=0.28,<1",
     "pytest>=8.4,<10",
@@ -29,6 +32,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["assistant_app*"]
+
+[tool.setuptools.package-data]
+assistant_app = ["web/**/*.html", "web/**/*.css", "web/**/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -40,4 +46,3 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
-

@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://assistant:assistant@localhost:5432/assistant"
     redis_url: str = "redis://localhost:6379/0"
     dependency_timeout_seconds: float = 3.0
+    admin_username: str = "admin"
+    admin_password: str = "change-this-admin-password"
+    secret_key: str = "change-this-application-secret-key"
+    session_ttl_seconds: int = 604800
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -40,6 +44,8 @@ class Settings(BaseSettings):
         sensitive_values = {
             "database_url": self.database_url,
             "redis_url": self.redis_url,
+            "admin_password": self.admin_password,
+            "secret_key": self.secret_key,
         }
 
         invalid = [

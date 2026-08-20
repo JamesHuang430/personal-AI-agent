@@ -22,4 +22,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Do not drop the extension: vectors may be shared with data outside this revision.
     pass
-

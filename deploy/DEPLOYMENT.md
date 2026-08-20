@@ -5,10 +5,11 @@
 - Compose project: `personal-ai-assistant`
 - Application image: `personal-ai-assistant-api:0.1.0`
 - API binding: `0.0.0.0:18000 -> 8000`
+- Operations binding: `0.0.0.0:19000 -> 8000`
 - Running profiles: base only
-- Running services: `assistant-api`, `postgres`, `redis`
+- Running services: `assistant-api`, `admin-api`, `postgres`, `redis`
 - Deferred profiles: `storage` (MinIO), `graph` (Neo4j), `ingress` (Caddy)
-- Alembic head: `20260820_0001`
+- Alembic head: `20260820_0003`
 - pgvector: enabled
 
 ## Legacy service status
@@ -28,9 +29,10 @@ Verification after cutover:
 
 - API liveness: OK
 - PostgreSQL and Redis readiness: OK
-- Alembic head: `20260820_0001`
+- Alembic head: `20260820_0003`
 - pgvector: `0.8.6`
-- New API is published on `0.0.0.0:18000`; PostgreSQL and Redis remain internal
+- User and operations applications are published on `18000` and `19000`;
+  PostgreSQL and Redis remain internal
 
 ## Update command
 

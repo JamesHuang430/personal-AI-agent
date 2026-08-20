@@ -15,12 +15,12 @@ def test_liveness_and_request_id() -> None:
     assert response.headers["X-Request-ID"] == "test-request"
 
 
-def test_root_exposes_versioned_health_path() -> None:
+def test_root_serves_user_interface() -> None:
     settings = Settings(_env_file=None, environment="test")
 
     with TestClient(create_app(settings)) as client:
         response = client.get("/")
 
     assert response.status_code == 200
-    assert response.json()["health"] == "/api/v1/health/live"
-
+    assert response.headers["content-type"].startswith("text/html")
+    assert "私人 AI 助理" in response.text

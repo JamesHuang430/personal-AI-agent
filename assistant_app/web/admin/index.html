@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知伴 · 运营控制台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <section id="login-view" class="login-shell">
+    <div class="login-card">
+      <div class="console-logo">知</div>
+      <p class="eyebrow">OPERATIONS CONSOLE</p>
+      <h1>登录运营后台</h1>
+      <p class="muted">管理用户、积分套餐与大模型渠道</p>
+      <form id="login-form">
+        <label>用户名<input id="username" autocomplete="username" value="admin" required></label>
+        <label>密码<input id="admin-password" type="password" autocomplete="current-password" required></label>
+        <button class="primary wide" type="submit">进入控制台 →</button>
+      </form>
+      <p class="secure-note">管理员会话使用 HttpOnly Cookie，API Key 加密保存</p>
+    </div>
+  </section>
+
+  <div id="console-view" class="console-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">知</span><div>知伴运营<small>Operations</small></div></div>
+      <nav>
+        <button class="nav-item active" data-page="overview" type="button"><span>⌂</span>概览</button>
+        <button class="nav-item" data-page="users" type="button"><span>◎</span>用户管理</button>
+        <button class="nav-item" data-page="packages" type="button"><span>◇</span>积分套餐</button>
+        <button class="nav-item" data-page="channels" type="button"><span>⌁</span>模型渠道</button>
+      </nav>
+      <div class="sidebar-foot"><span class="online-dot"></span>运营服务在线</div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div><p class="breadcrumb">知伴 / <span id="page-name">概览</span></p></div>
+        <div class="admin-profile"><span class="avatar">A</span><span id="admin-name">admin</span><button id="logout" type="button">退出</button></div>
+      </header>
+      <div class="content">
+        <section id="page-overview" class="page">
+          <div class="page-heading"><div><p class="eyebrow purple">DASHBOARD</p><h1>运营概览</h1><p class="muted">掌握用户增长、套餐与模型渠道状态</p></div><button class="ghost refresh" type="button">刷新数据</button></div>
+          <div id="stats" class="stats-grid"></div>
+          <div class="info-grid">
+            <article class="panel"><h3>注册规则</h3><div class="rule-row"><strong>3</strong><span>每天最多注册用户数</span></div><div class="rule-row"><strong>100</strong><span>每日签到奖励积分</span></div></article>
+            <article class="panel"><h3>积分规则</h3><div class="ratio">¥1 <span>=</span> 100 积分</div><p class="muted">套餐可额外赠送积分，实际支付能力待接入。</p></article>
+          </div>
+        </section>
+
+        <section id="page-users" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">USERS</p><h1>用户管理</h1><p class="muted">查看注册清单、启停账号并调整积分</p></div></div>
+          <div class="toolbar"><input id="user-search" placeholder="搜索用户邮箱"><button id="user-search-btn" class="primary" type="button">搜索</button></div>
+          <div class="panel table-panel"><table><thead><tr><th>用户</th><th>积分</th><th>状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="user-table"></tbody></table><p id="user-empty" class="empty hidden">暂无用户</p></div>
+        </section>
+
+        <section id="page-packages" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">PACKAGES</p><h1>积分套餐</h1><p class="muted">上架、编辑或停用积分套餐</p></div></div>
+          <form id="package-form" class="panel editor-form">
+            <input id="package-id" type="hidden">
+            <label>套餐名称<input id="package-name" placeholder="如：轻享套餐" required></label>
+            <label>价格（元）<input id="package-price" type="number" min="1" required></label>
+            <label>到账积分<input id="package-points" type="number" min="1" required></label>
+            <label>排序<input id="package-sort" type="number" value="0" required></label>
+            <label class="switch-label"><input id="package-active" type="checkbox" checked>立即上架</label>
+            <div class="form-actions"><button id="package-save" class="primary" type="submit">新增套餐</button><button id="package-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="package-grid" class="card-grid"></div>
+        </section>
+
+        <section id="page-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">MODEL PROVIDERS</p><h1>大模型渠道</h1><p class="muted">配置 OpenAI 兼容渠道，切换当前模型并控制全局 QPS</p></div></div>
+          <div class="security-banner"><span>⌾</span><div><strong>密钥安全</strong><p>API Key 经加密后入库，保存后不再回显；编辑时留空表示保持原 Key。</p></div></div>
+          <form id="channel-form" class="panel editor-form channel-form">
+            <input id="channel-id" type="hidden">
+            <label>渠道名称<input id="channel-name" placeholder="如：OpenAI 主渠道" required></label>
+            <label>Base URL<input id="channel-url" type="url" placeholder="https://api.openai.com/v1" required></label>
+            <label>API Key<input id="channel-key" type="password" placeholder="sk-..." required></label>
+            <label>模型名<input id="channel-model" value="gpt-4o-mini" required></label>
+            <label>QPS 限制<input id="channel-qps" type="number" min="1" max="1000" value="2" required></label>
+            <label class="switch-label"><input id="channel-active" type="checkbox">保存后立即启用</label>
+            <div class="form-actions"><button id="channel-save" class="primary" type="submit">新增渠道</button><button id="channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="channel-grid" class="channel-grid"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -5,7 +5,12 @@ from dataclasses import dataclass
 
 from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from assistant_app.core.config import Settings
 
@@ -24,6 +29,11 @@ class RuntimeDependencies:
         self.database: AsyncEngine = create_async_engine(
             settings.database_url,
             pool_pre_ping=True,
+        )
+        self.sessions = async_sessionmaker(
+            self.database,
+            class_=AsyncSession,
+            expire_on_commit=False,
         )
         self.redis: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -51,4 +61,3 @@ class RuntimeDependencies:
     async def readiness(self) -> dict[str, DependencyStatus]:
         database, redis = await asyncio.gather(self.check_database(), self.check_redis())
         return {"database": database, "redis": redis}
-

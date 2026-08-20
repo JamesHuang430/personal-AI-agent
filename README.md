@@ -1,12 +1,16 @@
 # Personal AI Assistant
 
-个人 AI 助理的自托管工程基座。当前完成阶段 0：安全配置、FastAPI 服务、Provider 中立的领域契约、PostgreSQL/pgvector、Redis、MinIO、可选 Neo4j，以及 Docker Compose 部署骨架。
+个人 AI 助理的自托管应用。当前版本包含用户端、运营后台、账号积分体系和可切换的 OpenAI 兼容大模型渠道，使用 FastAPI、PostgreSQL/pgvector、Redis 与 Docker Compose 部署。
 
 完整设计见 [docs/personal-ai-assistant-design.md](docs/personal-ai-assistant-design.md)。
 
 ## 当前能力
 
-- FastAPI 应用与版本化 API；
+- 邮箱注册与登录，全站每天最多注册 3 个用户；
+- 每位用户每天签到一次并获得 100 积分；
+- 用户工作台、积分套餐展示和大模型对话界面；
+- 独立运营后台：用户启停、积分调整、套餐管理；
+- 大模型渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
 - 存活和依赖就绪检查；
 - 请求 ID 与结构化容器日志；
 - 生产环境占位凭证校验；
@@ -14,7 +18,7 @@
 - PostgreSQL + pgvector、Redis、MinIO 和可选 Neo4j 的 Compose 服务；
 - Alembic 迁移骨架和基础测试。
 
-对话、文档处理、真实天气/票务 Provider 和 GraphRAG 将在后续阶段实现。当前 API 不会伪装成已经具备这些业务能力。
+文档处理、真实天气/票务 Provider、支付和 GraphRAG 将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
 
 ## Docker 快速启动
 
@@ -43,6 +47,9 @@
    Invoke-RestMethod http://127.0.0.1:18000/api/v1/health/live
    Invoke-RestMethod http://127.0.0.1:18000/api/v1/health/ready
    ```
+
+用户端默认访问 `http://127.0.0.1:18000/`，运营后台默认访问
+`http://127.0.0.1:19000/`。
 
 启用知识图谱服务：
 
@@ -81,6 +88,10 @@ docker compose --profile ingress up -d
 
 - `GET /api/v1/health/live`：进程存活检查。
 - `GET /api/v1/health/ready`：PostgreSQL、Redis 就绪检查。
+- `POST /api/v1/auth/register`：邮箱注册。
+- `POST /api/v1/users/check-in`：每日签到。
+- `POST /api/v1/chat`：调用当前启用的大模型渠道。
+- `GET /api/v1/admin/model-channels`：运营后台渠道清单（仅 `19000` 服务提供）。
 - `GET /docs`：开发和测试环境的 OpenAPI 页面；生产环境关闭。
 
 ## 安全说明

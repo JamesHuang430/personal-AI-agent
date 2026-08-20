@@ -27,11 +27,11 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
-    formatter = {
-        "()": "assistant_app.core.logging.JsonFormatter"
-    } if json_output else {
-        "format": "%(asctime)s %(levelname)s %(name)s %(message)s"
-    }
+    formatter = (
+        {"()": "assistant_app.core.logging.JsonFormatter"}
+        if json_output
+        else {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}
+    )
     logging.config.dictConfig(
         {
             "version": 1,
@@ -47,4 +47,3 @@ def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
             "root": {"handlers": ["console"], "level": level.upper()},
         }
     )
-

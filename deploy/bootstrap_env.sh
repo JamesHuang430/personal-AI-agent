@@ -17,12 +17,17 @@ fi
 umask 077
 postgres_secret=$(openssl rand -hex 24)
 redis_secret=$(openssl rand -hex 24)
+admin_secret=$(openssl rand -hex 18)
+application_secret=$(openssl rand -hex 32)
 
 cat >"${env_path}" <<EOF
 ASSISTANT_IMAGE_TAG=0.1.0
 ASSISTANT_LOG_LEVEL=INFO
 ASSISTANT_API_PORT=18000
 ASSISTANT_CORS_ORIGINS=https://assistant.example.com
+ASSISTANT_ADMIN_USERNAME=admin
+ASSISTANT_ADMIN_PASSWORD=${admin_secret}
+ASSISTANT_SECRET_KEY=${application_secret}
 PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 PIP_DEFAULT_TIMEOUT=120
 
@@ -34,3 +39,4 @@ EOF
 
 chmod 600 "${env_path}"
 echo "Generated ${env_path} with mode 600."
+echo "The generated admin password is stored in ${env_path}."

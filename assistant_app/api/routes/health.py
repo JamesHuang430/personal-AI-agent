@@ -28,9 +28,7 @@ async def readiness(request: Request) -> JSONResponse:
     body = {
         "status": "ok" if ready else "degraded",
         "checks": {
-            name: {"status": check.status, "detail": check.detail}
-            for name, check in checks.items()
+            name: {"status": check.status, "detail": check.detail} for name, check in checks.items()
         },
     }
     return JSONResponse(status_code=200 if ready else 503, content=body)
-

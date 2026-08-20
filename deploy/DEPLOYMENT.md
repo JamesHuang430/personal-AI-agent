@@ -4,12 +4,12 @@
 - Project path: `/home/ubuntu/code/ai-agent`
 - Compose project: `personal-ai-assistant`
 - Application image: `personal-ai-assistant-api:0.1.0`
-- API binding: `0.0.0.0:18000 -> 8000`
-- Operations binding: `0.0.0.0:19000 -> 8000`
+- HTTPS ingress: Nginx on `0.0.0.0:18000` and `0.0.0.0:19000`
+- Internal upstreams: `assistant-api:8000` and `admin-api:8000`
 - Running profiles: base only
-- Running services: `assistant-api`, `admin-api`, `postgres`, `redis`
-- Deferred profiles: `storage` (MinIO), `graph` (Neo4j), `ingress` (Caddy)
-- Alembic head: `20260820_0003`
+- Base services: `nginx`, `assistant-api`, `admin-api`, `postgres`, `redis`
+- Deferred profiles: `storage` (MinIO), `graph` (Neo4j)
+- Alembic head: `20260820_0004`
 - pgvector: enabled
 
 ## Legacy service status
@@ -29,10 +29,10 @@ Verification after cutover:
 
 - API liveness: OK
 - PostgreSQL and Redis readiness: OK
-- Alembic head: `20260820_0003`
+- Alembic head: `20260820_0004`
 - pgvector: `0.8.6`
-- User and operations applications are published on `18000` and `19000`;
-  PostgreSQL and Redis remain internal
+- Nginx is the only public Web entry point. Application APIs, PostgreSQL and
+  Redis remain internal.
 
 ## Update command
 
@@ -41,6 +41,6 @@ cd /home/ubuntu/code/ai-agent
 ./deploy/deploy.sh
 ```
 
-The deployment script validates Compose, rebuilds the application image,
-starts the base stack, applies Alembic migrations, and waits for the readiness
-endpoint.
+The deployment script generates a self-signed certificate when needed,
+validates Compose, rebuilds the application image, starts the base stack,
+applies Alembic migrations, and waits for the HTTPS readiness endpoint.

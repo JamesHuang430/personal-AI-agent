@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -14,7 +14,7 @@ from assistant_app.api.dependencies import ADMIN_SESSION_COOKIE, current_admin
 from assistant_app.core.encryption import encrypt_secret
 from assistant_app.core.security import new_session_token, session_digest
 from assistant_app.core.time import utc_day_bounds
-from assistant_app.db.models import ModelChannel, Package, PointLedger, User
+from assistant_app.db.models import ModelChannel, Package, PointLedger, User, VideoChannel
 from assistant_app.db.runtime import RuntimeDependencies
 
 router = APIRouter()
@@ -85,6 +85,37 @@ class ChannelUpdatePayload(BaseModel):
         return _validate_base_url(value) if value is not None else None
 
 
+class VideoChannelCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    base_url: str
+    api_key: str = Field(min_length=1, max_length=2000)
+    model_name: str = Field(default="sora-2", min_length=1, max_length=200)
+    qps_limit: int = Field(default=1, ge=1, le=1000)
+    default_seconds: Literal["4", "8", "12"] = "4"
+    default_size: Literal["720x1280", "1280x720", "1024x1792", "1792x1024"] = "1280x720"
+    is_active: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str) -> str:
+        return _validate_base_url(value)
+
+
+class VideoChannelUpdatePayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    base_url: str | None = None
+    api_key: str | None = Field(default=None, min_length=1, max_length=2000)
+    model_name: str | None = Field(default=None, min_length=1, max_length=200)
+    qps_limit: int | None = Field(default=None, ge=1, le=1000)
+    default_seconds: Literal["4", "8", "12"] | None = None
+    default_size: Literal["720x1280", "1280x720", "1024x1792", "1792x1024"] | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str | None) -> str | None:
+        return _validate_base_url(value) if value is not None else None
+
+
 def _user_payload(user: User) -> dict[str, object]:
     return {
         "id": str(user.id),
@@ -121,6 +152,21 @@ def _channel_payload(item: ModelChannel) -> dict[str, object]:
     }
 
 
+def _video_channel_payload(item: VideoChannel) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "base_url": item.base_url,
+        "model_name": item.model_name,
+        "qps_limit": item.qps_limit,
+        "default_seconds": item.default_seconds,
+        "default_size": item.default_size,
+        "is_active": item.is_active,
+        "api_key_configured": bool(item.encrypted_api_key),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
 @router.post("/auth/login")
 async def admin_login(
     payload: AdminLoginPayload, request: Request, response: Response
@@ -142,7 +188,7 @@ async def admin_login(
         token,
         max_age=settings.session_ttl_seconds,
         httponly=True,
-        secure=False,
+        secure=settings.environment == "production",
         samesite="lax",
         path="/",
     )
@@ -419,3 +465,108 @@ async def disable_model_channel(
         item.is_active = False
         item.updated_at = datetime.now(UTC)
     return _channel_payload(item)
+
+
+@router.get("/video-channels")
+async def video_channels(
+    request: Request, _admin: Annotated[str, Depends(current_admin)]
+) -> list[dict[str, object]]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        rows = (
+            await session.scalars(select(VideoChannel).order_by(VideoChannel.created_at.desc()))
+        ).all()
+    return [_video_channel_payload(item) for item in rows]
+
+
+@router.post("/video-channels", status_code=status.HTTP_201_CREATED)
+async def create_video_channel(
+    payload: VideoChannelCreatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    async with runtime.sessions() as session, session.begin():
+        if payload.is_active:
+            await session.execute(update(VideoChannel).values(is_active=False))
+        item = VideoChannel(
+            name=payload.name.strip(),
+            base_url=payload.base_url,
+            model_name=payload.model_name.strip(),
+            encrypted_api_key=encrypt_secret(payload.api_key, settings.secret_key),
+            qps_limit=payload.qps_limit,
+            default_seconds=payload.default_seconds,
+            default_size=payload.default_size,
+            is_active=payload.is_active,
+        )
+        session.add(item)
+        await session.flush()
+    return _video_channel_payload(item)
+
+
+@router.patch("/video-channels/{channel_id}")
+async def update_video_channel(
+    channel_id: UUID,
+    payload: VideoChannelUpdatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    values = payload.model_dump(exclude_unset=True)
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(VideoChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="视频生成渠道不存在")
+        if "name" in values:
+            item.name = values["name"].strip()
+        if "base_url" in values:
+            item.base_url = values["base_url"]
+        if "api_key" in values:
+            item.encrypted_api_key = encrypt_secret(values["api_key"], settings.secret_key)
+        if "model_name" in values:
+            item.model_name = values["model_name"].strip()
+        if "qps_limit" in values:
+            item.qps_limit = values["qps_limit"]
+        if "default_seconds" in values:
+            item.default_seconds = values["default_seconds"]
+        if "default_size" in values:
+            item.default_size = values["default_size"]
+        item.updated_at = datetime.now(UTC)
+    return _video_channel_payload(item)
+
+
+@router.post("/video-channels/{channel_id}/activate")
+async def activate_video_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(VideoChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="视频生成渠道不存在")
+        await session.execute(
+            update(VideoChannel).where(VideoChannel.id != channel_id).values(is_active=False)
+        )
+        item.is_active = True
+        item.updated_at = datetime.now(UTC)
+    return _video_channel_payload(item)
+
+
+@router.post("/video-channels/{channel_id}/disable")
+async def disable_video_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(VideoChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="视频生成渠道不存在")
+        item.is_active = False
+        item.updated_at = datetime.now(UTC)
+    return _video_channel_payload(item)

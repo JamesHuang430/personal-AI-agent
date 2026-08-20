@@ -12,7 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
 
 RUN groupadd --system assistant \
-    && useradd --system --gid assistant --home-dir /app assistant
+    && useradd --system --gid assistant --home-dir /app assistant \
+    && mkdir -p /data/generated \
+    && chown -R assistant:assistant /data
 
 WORKDIR /app
 

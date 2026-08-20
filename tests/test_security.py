@@ -4,6 +4,7 @@ from assistant_app.core.security import (
     normalize_email,
     verify_password,
 )
+from assistant_app.services.generated_files import safe_filename
 
 
 def test_password_hash_round_trip() -> None:
@@ -23,3 +24,8 @@ def test_model_api_key_encryption_round_trip() -> None:
 
     assert "sk-private-value" not in encrypted
     assert decrypt_secret(encrypted, "application-secret") == "sk-private-value"
+
+
+def test_generated_filename_is_sanitized_and_limited() -> None:
+    assert safe_filename("../../周计划.md") == "周计划.md"
+    assert safe_filename("unsafe.exe") == "unsafe.md"

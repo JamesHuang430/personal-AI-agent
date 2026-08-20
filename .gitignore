@@ -17,6 +17,7 @@ venv/
 .env.*
 !.env.example
 deploy/.env
+deploy/certs/
 
 # IDE and OS files
 .idea/
@@ -29,5 +30,6 @@ Thumbs.db
 data/
 logs/
 uploads/
+generated/
 backups/
 work/

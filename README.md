@@ -1,6 +1,6 @@
 # Personal AI Assistant
 
-个人 AI 助理的自托管应用。当前版本包含用户端、运营后台、账号积分体系和可切换的 OpenAI 兼容大模型渠道，使用 FastAPI、PostgreSQL/pgvector、Redis 与 Docker Compose 部署。
+个人 AI 助理的自托管应用。当前版本包含用户端、运营后台、账号积分体系、文件生成、视频任务和可切换的 OpenAI 兼容模型渠道，使用 FastAPI、PostgreSQL/pgvector、Redis、Nginx 与 Docker Compose 部署。
 
 完整设计见 [docs/personal-ai-assistant-design.md](docs/personal-ai-assistant-design.md)。
 
@@ -11,6 +11,9 @@
 - 用户工作台、积分套餐展示和大模型对话界面；
 - 独立运营后台：用户启停、积分调整、套餐管理；
 - 大模型渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
+- 视频生成渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
+- Agent 可按对话意图生成安全的文本类文件，并提供用户隔离的下载入口；
+- Agent 可创建异步视频任务，查询进度并在完成后下载结果；
 - 存活和依赖就绪检查；
 - 请求 ID 与结构化容器日志；
 - 生产环境占位凭证校验；
@@ -57,15 +60,10 @@
 docker compose --profile graph up -d
 ```
 
-启用 Caddy 接入层前，先配置域名解析和 `ASSISTANT_DOMAIN`：
-
-```powershell
-docker compose --profile ingress up -d
-```
-
 数据库、Redis 默认不映射宿主机端口。API、MinIO 和 Neo4j 的开发端口只绑定在 `127.0.0.1`。API 默认使用宿主机 `18000`，避免与远端现有 `deploy-api-1` 的 `8000` 冲突。
 
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
+生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。
 
 ## 本地 Python 开发
 
@@ -91,7 +89,10 @@ docker compose --profile ingress up -d
 - `POST /api/v1/auth/register`：邮箱注册。
 - `POST /api/v1/users/check-in`：每日签到。
 - `POST /api/v1/chat`：调用当前启用的大模型渠道。
+- `GET /api/v1/files`：列出当前用户由 Agent 生成的文件。
+- `GET /api/v1/videos`：列出当前用户的视频生成任务。
 - `GET /api/v1/admin/model-channels`：运营后台渠道清单（仅 `19000` 服务提供）。
+- `GET /api/v1/admin/video-channels`：运营后台视频渠道清单（仅 `19000` 服务提供）。
 - `GET /docs`：开发和测试环境的 OpenAPI 页面；生产环境关闭。
 
 ## 安全说明

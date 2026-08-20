@@ -30,6 +30,7 @@
         <button class="nav-item" data-page="users" type="button"><span>◎</span>用户管理</button>
         <button class="nav-item" data-page="packages" type="button"><span>◇</span>积分套餐</button>
         <button class="nav-item" data-page="channels" type="button"><span>⌁</span>模型渠道</button>
+        <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
       </nav>
       <div class="sidebar-foot"><span class="online-dot"></span>运营服务在线</div>
     </aside>
@@ -82,6 +83,24 @@
             <div class="form-actions"><button id="channel-save" class="primary" type="submit">新增渠道</button><button id="channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="channel-grid" class="channel-grid"></div>
+        </section>
+
+        <section id="page-video-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">VIDEO PROVIDERS</p><h1>视频生成渠道</h1><p class="muted">配置 OpenAI Videos API 兼容渠道、默认画面参数和全局 QPS</p></div></div>
+          <div class="security-banner"><span>▶</span><div><strong>异步视频任务</strong><p>用户提出视频生成要求后，Agent 自动提交任务并轮询结果；API Key 加密入库且不回显。</p></div></div>
+          <form id="video-channel-form" class="panel editor-form channel-form">
+            <input id="video-channel-id" type="hidden">
+            <label>渠道名称<input id="video-channel-name" placeholder="如：视频主渠道" required></label>
+            <label>Base URL<input id="video-channel-url" type="url" placeholder="https://api.example.com/v1" required></label>
+            <label>API Key<input id="video-channel-key" type="password" placeholder="sk-..." required></label>
+            <label>模型名<input id="video-channel-model" value="sora-2" required></label>
+            <label>QPS 限制<input id="video-channel-qps" type="number" min="1" max="1000" value="1" required></label>
+            <label>默认时长<select id="video-channel-seconds"><option value="4">4 秒</option><option value="8">8 秒</option><option value="12">12 秒</option></select></label>
+            <label>默认尺寸<select id="video-channel-size"><option value="1280x720">1280×720 横屏</option><option value="720x1280">720×1280 竖屏</option><option value="1792x1024">1792×1024 横屏</option><option value="1024x1792">1024×1792 竖屏</option></select></label>
+            <label class="switch-label"><input id="video-channel-active" type="checkbox">保存后立即启用</label>
+            <div class="form-actions"><button id="video-channel-save" class="primary" type="submit">新增视频渠道</button><button id="video-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="video-channel-grid" class="channel-grid"></div>
         </section>
       </div>
     </main>

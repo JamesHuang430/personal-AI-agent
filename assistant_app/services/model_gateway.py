@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -18,6 +19,51 @@ class ModelChannelUnavailableError(RuntimeError):
 
 class ModelRateLimitError(RuntimeError):
     pass
+
+
+AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_file",
+            "description": (
+                "根据用户要求生成可下载的文本类文件。用户明确要求生成、导出或保存文件时调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "文件名，扩展名限 md、txt、csv、json、html",
+                    },
+                    "content": {"type": "string", "description": "完整文件内容"},
+                },
+                "required": ["filename", "content"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_video",
+            "description": "用户明确要求生成视频时，提交异步视频生成任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "适合视频模型的详细画面提示词"},
+                    "seconds": {"type": "string", "enum": ["4", "8", "12"]},
+                    "size": {
+                        "type": "string",
+                        "enum": ["720x1280", "1280x720", "1024x1792", "1792x1024"],
+                    },
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
 
 
 async def _enforce_qps(runtime: RuntimeDependencies, channel: ModelChannel) -> None:
@@ -50,6 +96,8 @@ async def chat_completion(
             "content": (
                 "你是一个可靠、友善的私人 AI 助理。使用简体中文回答，"
                 "不知道的信息要明确说明，不要虚构机票、火车票或实时数据。"
+                "用户明确要求生成或导出文件时调用 create_file；明确要求生成视频时调用"
+                " generate_video。不要声称已经生成文件或视频，必须实际调用对应工具。"
             ),
         },
         *history[-20:],
@@ -59,13 +107,27 @@ async def chat_completion(
         completion = await client.chat.completions.create(
             model=channel.model_name,
             messages=messages,
+            tools=AGENT_TOOLS,
+            tool_choice="auto",
         )
-    content = completion.choices[0].message.content or "模型没有返回文本内容。"
+    response_message = completion.choices[0].message
+    tool_calls: list[dict[str, Any]] = []
+    for call in response_message.tool_calls or []:
+        if call.type != "function":
+            continue
+        try:
+            arguments = json.loads(call.function.arguments)
+        except json.JSONDecodeError:
+            continue
+        tool_calls.append({"name": call.function.name, "arguments": arguments})
+
+    content = response_message.content or ""
     usage = completion.usage
     return {
         "content": content,
         "channel": channel.name,
         "model": channel.model_name,
+        "tool_calls": tool_calls[:3],
         "usage": {
             "prompt_tokens": usage.prompt_tokens if usage else None,
             "completion_tokens": usage.completion_tokens if usage else None,

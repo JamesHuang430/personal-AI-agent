@@ -132,6 +132,51 @@ function addMessage(role, content, meta = '') {
   return wrapper;
 }
 
+function renderArtifacts(message, result) {
+  const files = result.files || [];
+  const jobs = result.video_jobs || [];
+  if (!files.length && !jobs.length) return;
+  const list = document.createElement('div');
+  list.className = 'artifact-list';
+  for (const file of files) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.innerHTML = `<div><strong>▤ ${escapeHtml(file.filename)}</strong><small>${Math.max(1, Math.ceil(file.size_bytes / 1024))} KB</small></div><a href="${file.download_url}">下载文件</a>`;
+    list.appendChild(card);
+  }
+  for (const job of jobs) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.innerHTML = `<div><strong>▶ 视频生成任务</strong><small>排队中 · ${escapeHtml(job.seconds)} 秒 · ${escapeHtml(job.size)}</small></div><a href="#">刷新状态</a>`;
+    card.querySelector('a').addEventListener('click', (event) => { event.preventDefault(); pollVideoJob(job.id, card); });
+    list.appendChild(card);
+    window.setTimeout(() => pollVideoJob(job.id, card), 5000);
+  }
+  message.querySelector('.message-bubble').appendChild(list);
+}
+
+async function pollVideoJob(jobId, card) {
+  try {
+    const job = await api(`/videos/${jobId}`);
+    const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
+    card.querySelector('small').textContent = `${statusText} · ${job.seconds} 秒 · ${job.size}`;
+    if (job.status === 'completed') {
+      card.querySelector('a').textContent = '下载视频';
+      card.querySelector('a').href = job.download_url;
+      return;
+    }
+    if (job.status === 'failed') {
+      card.classList.add('failed');
+      card.querySelector('small').textContent = job.error_message || '视频渠道返回失败';
+      card.querySelector('a').remove();
+      return;
+    }
+    window.setTimeout(() => pollVideoJob(jobId, card), 5000);
+  } catch (error) {
+    card.querySelector('small').textContent = error.message;
+  }
+}
+
 async function sendMessage(text) {
   const content = text.trim();
   if (!content) return;
@@ -147,7 +192,8 @@ async function sendMessage(text) {
       body: JSON.stringify({ message: content, history: priorHistory }),
     });
     pending.remove();
-    addMessage('assistant', result.content, `${result.channel} · ${result.model}`);
+    const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}`);
+    renderArtifacts(responseMessage, result);
     conversation.push({ role: 'assistant', content: result.content });
   } catch (error) {
     pending.remove();

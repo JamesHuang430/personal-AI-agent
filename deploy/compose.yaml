@@ -35,9 +35,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      # Public IP access is enabled for the API. Keep PostgreSQL and Redis internal.
-      - "0.0.0.0:${ASSISTANT_API_PORT:-18000}:8000"
+    expose:
+      - "8000"
+    volumes:
+      - generated_files:/data/generated
     read_only: true
     tmpfs:
       - /tmp:size=128m,noexec,nosuid
@@ -74,8 +75,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "0.0.0.0:${ASSISTANT_ADMIN_PORT:-19000}:8000"
+    expose:
+      - "8000"
     read_only: true
     tmpfs:
       - /tmp:size=128m,noexec,nosuid
@@ -164,33 +165,36 @@ services:
     networks:
       - data_net
 
-  caddy:
+  nginx:
     <<: *runtime-defaults
-    image: caddy:2.10-alpine
-    profiles: ["ingress"]
-    environment:
-      ASSISTANT_DOMAIN: ${ASSISTANT_DOMAIN:-assistant.invalid}
+    image: nginx:stable-alpine
     depends_on:
       assistant-api:
         condition: service_healthy
+      admin-api:
+        condition: service_healthy
     ports:
-      - "${ASSISTANT_HTTP_PORT:-80}:80"
-      - "${ASSISTANT_HTTPS_PORT:-443}:443"
-      - "${ASSISTANT_HTTPS_PORT:-443}:443/udp"
+      - "0.0.0.0:${ASSISTANT_API_PORT:-18000}:18000"
+      - "0.0.0.0:${ASSISTANT_ADMIN_PORT:-19000}:19000"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs/assistant.crt:/etc/nginx/certs/assistant.crt:ro
+      - ./certs/assistant.key:/etc/nginx/certs/assistant.key:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=64m,noexec,nosuid
+      - /var/run:size=4m,noexec,nosuid
+      - /tmp:size=16m,noexec,nosuid
     networks:
       - edge_net
+      - app_net
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   neo4j_data:
-  caddy_data:
-  caddy_config:
+  generated_files:
 
 networks:
   edge_net:

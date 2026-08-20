@@ -5,23 +5,25 @@ This directory contains the Ubuntu deployment assets for the personal assistant.
 ```bash
 cd /home/ubuntu/code/ai-agent
 ./deploy/bootstrap_env.sh
-# Edit deploy/.env to configure the real model provider and domain.
+# Edit deploy/.env and configure the production secrets and public IP.
 ./deploy/deploy.sh
 ```
 
-The base deployment publishes the user application on `0.0.0.0:18000`, the
-operations console on `0.0.0.0:19000`, and starts PostgreSQL and Redis. It does
-not start MinIO, Neo4j, or Caddy. This lets it run next to
-the existing `deploy-*` containers without a port cutover. MinIO is kept in the
-`storage` profile because the current API does not expose document uploads yet.
+The deployment starts PostgreSQL, Redis, the user API, the operations API and
+Nginx. Only Nginx publishes host ports: HTTPS `18000` for the user application
+and HTTPS `19000` for the operations console. Backend services stay on the
+internal Compose network. MinIO and Neo4j remain optional profiles.
 
 The cloud security group must allow TCP `18000` for users and TCP `19000` for
-operators. Restrict `19000` to trusted source IPs whenever possible. Configure
-HTTPS before production use because the initial IP-based deployment uses HTTP.
+operators. Restrict `19000` to trusted source IPs whenever possible.
+
+`deploy/deploy.sh` creates an IP-aware self-signed certificate in
+`deploy/certs/` when no certificate exists. Browsers will warn until the public
+certificate is explicitly trusted. Replace it with a CA-issued certificate as
+soon as a domain is available; never commit the private key.
 
 Do not enable the `graph` profile on the current 3.6 GiB server while the old
-stack is still running. Do not enable `ingress` until a real domain has been
-configured and ports 80/443 are confirmed free.
+stack is still running.
 
 When document ingestion is implemented, enable object storage with:
 
@@ -34,6 +36,6 @@ Useful commands:
 ```bash
 docker compose --project-name personal-ai-assistant --env-file deploy/.env -f deploy/compose.yaml ps
 docker compose --project-name personal-ai-assistant --env-file deploy/.env -f deploy/compose.yaml logs -f assistant-api
-curl --fail http://127.0.0.1:18000/api/v1/health/ready
-curl --fail http://127.0.0.1:19000/api/v1/health/ready
+curl --insecure --fail https://127.0.0.1:18000/api/v1/health/ready
+curl --insecure --fail https://127.0.0.1:19000/api/v1/health/ready
 ```

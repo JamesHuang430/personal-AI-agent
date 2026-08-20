@@ -42,13 +42,13 @@ class LoginPayload(RegisterPayload):
     pass
 
 
-def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
+def _set_session_cookie(response: Response, token: str, max_age: int, secure: bool) -> None:
     response.set_cookie(
         USER_SESSION_COOKIE,
         token,
         max_age=max_age,
         httponly=True,
-        secure=False,
+        secure=secure,
         samesite="lax",
         path="/",
     )
@@ -77,7 +77,12 @@ async def _create_session(request: Request, response: Response, user: User) -> d
     token, digest = new_session_token()
     ttl = request.app.state.settings.session_ttl_seconds
     await runtime.redis.set(f"session:user:{digest}", str(user.id), ex=ttl)
-    _set_session_cookie(response, token, ttl)
+    _set_session_cookie(
+        response,
+        token,
+        ttl,
+        secure=request.app.state.settings.environment == "production",
+    )
     return await _session_payload(runtime, user)
 
 

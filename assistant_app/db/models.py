@@ -145,6 +145,30 @@ class VideoChannel(Base):
     )
 
 
+class EmailChannel(Base):
+    __tablename__ = "email_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="163 SMTP")
+    smtp_host: Mapped[str] = mapped_column(String(255), nullable=False, default="smtp.163.com")
+    smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=465)
+    smtp_username: Mapped[str] = mapped_column(String(320), nullable=False)
+    encrypted_auth_code: Mapped[str] = mapped_column(Text, nullable=False)
+    from_name: Mapped[str] = mapped_column(String(100), nullable=False, default="知伴 AI")
+    use_ssl: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class GeneratedFile(Base):
     __tablename__ = "generated_files"
 

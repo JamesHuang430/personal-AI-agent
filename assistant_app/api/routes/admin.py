@@ -11,11 +11,24 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 
 from assistant_app.api.dependencies import ADMIN_SESSION_COOKIE, current_admin
-from assistant_app.core.encryption import encrypt_secret
-from assistant_app.core.security import new_session_token, session_digest
+from assistant_app.core.encryption import decrypt_secret, encrypt_secret
+from assistant_app.core.security import new_session_token, normalize_email, session_digest
 from assistant_app.core.time import utc_day_bounds
-from assistant_app.db.models import ModelChannel, Package, PointLedger, User, VideoChannel
+from assistant_app.db.models import (
+    EmailChannel,
+    ModelChannel,
+    Package,
+    PointLedger,
+    User,
+    VideoChannel,
+)
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.auth_verification import create_captcha, verify_captcha
+from assistant_app.services.email_delivery import (
+    EmailDeliveryError,
+    SmtpConnection,
+    send_test_email,
+)
 
 router = APIRouter()
 
@@ -23,6 +36,8 @@ router = APIRouter()
 class AdminLoginPayload(BaseModel):
     username: str
     password: str
+    captcha_id: str = Field(min_length=16, max_length=200)
+    captcha_answer: str = Field(min_length=1, max_length=12)
 
 
 class UserStatusPayload(BaseModel):
@@ -116,6 +131,39 @@ class VideoChannelUpdatePayload(BaseModel):
         return _validate_base_url(value) if value is not None else None
 
 
+class EmailChannelPayload(BaseModel):
+    name: str = Field(default="163 SMTP", min_length=1, max_length=100)
+    smtp_host: str = Field(default="smtp.163.com", min_length=1, max_length=255)
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    smtp_username: str
+    auth_code: str | None = Field(default=None, min_length=1, max_length=1000)
+    from_name: str = Field(default="知伴 AI", min_length=1, max_length=100)
+    use_ssl: bool = True
+    is_active: bool = True
+
+    @field_validator("smtp_username")
+    @classmethod
+    def valid_username(cls, value: str) -> str:
+        return normalize_email(value)
+
+    @field_validator("smtp_host")
+    @classmethod
+    def valid_host(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized or any(character.isspace() for character in normalized):
+            raise ValueError("请输入有效的 SMTP 主机")
+        return normalized
+
+
+class EmailTestPayload(BaseModel):
+    recipient: str
+
+    @field_validator("recipient")
+    @classmethod
+    def valid_recipient(cls, value: str) -> str:
+        return normalize_email(value)
+
+
 def _user_payload(user: User) -> dict[str, object]:
     return {
         "id": str(user.id),
@@ -167,11 +215,61 @@ def _video_channel_payload(item: VideoChannel) -> dict[str, object]:
     }
 
 
+def _email_channel_payload(item: EmailChannel | None) -> dict[str, object]:
+    if item is None:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "id": str(item.id),
+        "name": item.name,
+        "smtp_host": item.smtp_host,
+        "smtp_port": item.smtp_port,
+        "smtp_username": item.smtp_username,
+        "from_name": item.from_name,
+        "use_ssl": item.use_ssl,
+        "is_active": item.is_active,
+        "auth_code_configured": bool(item.encrypted_auth_code),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _smtp_connection(item: EmailChannel, secret_key: str) -> SmtpConnection:
+    return SmtpConnection(
+        host=item.smtp_host,
+        port=item.smtp_port,
+        username=item.smtp_username,
+        auth_code=decrypt_secret(item.encrypted_auth_code, secret_key),
+        from_name=item.from_name,
+        use_ssl=item.use_ssl,
+    )
+
+
+@router.get("/auth/captcha")
+async def admin_captcha(request: Request, response: Response) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    challenge = await create_captcha(runtime.redis, request.app.state.settings.secret_key)
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "captcha_id": challenge.id,
+        "question": challenge.question,
+        "expires_in": challenge.expires_in,
+    }
+
+
 @router.post("/auth/login")
 async def admin_login(
     payload: AdminLoginPayload, request: Request, response: Response
 ) -> dict[str, str]:
     settings = request.app.state.settings
+    runtime: RuntimeDependencies = request.app.state.runtime
+    captcha_valid = await verify_captcha(
+        runtime.redis,
+        settings.secret_key,
+        payload.captcha_id,
+        payload.captcha_answer,
+    )
+    if not captcha_valid:
+        raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
     valid = hmac.compare_digest(payload.username, settings.admin_username) and hmac.compare_digest(
         payload.password, settings.admin_password
     )
@@ -179,7 +277,6 @@ async def admin_login(
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token, digest = new_session_token()
-    runtime: RuntimeDependencies = request.app.state.runtime
     await runtime.redis.set(
         f"session:admin:{digest}", settings.admin_username, ex=settings.session_ttl_seconds
     )
@@ -570,3 +667,80 @@ async def disable_video_channel(
         item.is_active = False
         item.updated_at = datetime.now(UTC)
     return _video_channel_payload(item)
+
+
+@router.get("/email-channel")
+async def email_channel(
+    request: Request, _admin: Annotated[str, Depends(current_admin)]
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        item = await session.scalar(
+            select(EmailChannel).order_by(EmailChannel.created_at.desc()).limit(1)
+        )
+    return _email_channel_payload(item)
+
+
+@router.put("/email-channel")
+async def upsert_email_channel(
+    payload: EmailChannelPayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    async with runtime.sessions() as session, session.begin():
+        item = await session.scalar(
+            select(EmailChannel)
+            .order_by(EmailChannel.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if item is None:
+            if not payload.auth_code:
+                raise HTTPException(status_code=422, detail="首次配置必须填写 SMTP 授权码")
+            item = EmailChannel(
+                name=payload.name.strip(),
+                smtp_host=payload.smtp_host,
+                smtp_port=payload.smtp_port,
+                smtp_username=payload.smtp_username,
+                encrypted_auth_code=encrypt_secret(payload.auth_code, settings.secret_key),
+                from_name=payload.from_name.strip(),
+                use_ssl=payload.use_ssl,
+                is_active=payload.is_active,
+            )
+            session.add(item)
+            await session.flush()
+        else:
+            item.name = payload.name.strip()
+            item.smtp_host = payload.smtp_host
+            item.smtp_port = payload.smtp_port
+            item.smtp_username = payload.smtp_username
+            item.from_name = payload.from_name.strip()
+            item.use_ssl = payload.use_ssl
+            item.is_active = payload.is_active
+            if payload.auth_code:
+                item.encrypted_auth_code = encrypt_secret(payload.auth_code, settings.secret_key)
+            item.updated_at = datetime.now(UTC)
+    return _email_channel_payload(item)
+
+
+@router.post("/email-channel/test")
+async def test_email_channel(
+    payload: EmailTestPayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, str]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        item = await session.scalar(
+            select(EmailChannel).order_by(EmailChannel.created_at.desc()).limit(1)
+        )
+    if item is None:
+        raise HTTPException(status_code=404, detail="请先保存邮件渠道")
+    try:
+        connection = _smtp_connection(item, request.app.state.settings.secret_key)
+        await send_test_email(connection, payload.recipient, request.app.state.settings.app_name)
+    except (EmailDeliveryError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="测试邮件发送失败，请检查 SMTP 配置") from exc
+    return {"message": "测试邮件已发送"}

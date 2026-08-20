@@ -17,6 +17,11 @@ internal Compose network. MinIO and Neo4j remain optional profiles.
 The cloud security group must allow TCP `18000` for users and TCP `19000` for
 operators. Restrict `19000` to trusted source IPs whenever possible.
 
+After the first operations login, open **邮件服务** and configure the sender
+mailbox, SMTP host/port, authorization code and TLS mode. The authorization
+code is encrypted in PostgreSQL and is never returned by the API. Use the test
+mail action before enabling public registration and password reset.
+
 `deploy/deploy.sh` creates an IP-aware self-signed certificate in
 `deploy/certs/` when no certificate exists. Browsers will warn until the public
 certificate is explicitly trusted. Replace it with a CA-issued certificate as

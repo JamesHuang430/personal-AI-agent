@@ -3,6 +3,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 let packagesCache = [];
 let channelsCache = [];
 let videoChannelsCache = [];
+let adminCaptchaId = '';
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/v1/admin${path}`, {
@@ -18,6 +19,20 @@ function escapeHtml(value) { const node = document.createElement('div'); node.te
 function notify(message) { const toast=$('#toast'); toast.textContent=message; toast.classList.remove('hidden'); clearTimeout(notify.timer); notify.timer=setTimeout(()=>toast.classList.add('hidden'),2800); }
 function formatDate(value) { return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '—'; }
 
+async function loadAdminCaptcha() {
+  $('#admin-captcha-question').textContent = '刷新中…';
+  $('#admin-captcha-answer').value = '';
+  try {
+    const result = await api('/auth/captcha');
+    adminCaptchaId = result.captcha_id;
+    $('#admin-captcha-question').textContent = result.question;
+  } catch (error) {
+    $('#admin-captcha-question').textContent = '点击重试';
+    notify(error.message);
+  }
+}
+$('#admin-captcha-question').addEventListener('click', loadAdminCaptcha);
+
 async function establishSession() {
   try {
     const session = await api('/auth/session');
@@ -25,22 +40,23 @@ async function establishSession() {
     $('#login-view').classList.add('hidden');
     $('#console-view').classList.remove('hidden');
     await loadOverview();
-  } catch { $('#login-view').classList.remove('hidden'); }
+  } catch { $('#login-view').classList.remove('hidden'); loadAdminCaptcha(); }
 }
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const result = await api('/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#admin-password').value})});
+    const result = await api('/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#admin-password').value,captcha_id:adminCaptchaId,captcha_answer:$('#admin-captcha-answer').value})});
     $('#admin-name').textContent=result.username; $('#login-view').classList.add('hidden'); $('#console-view').classList.remove('hidden'); await loadOverview(); notify('登录成功');
-  } catch(error){notify(error.message);}
+  } catch(error){notify(error.message);loadAdminCaptcha();}
 });
 $('#logout').addEventListener('click',async()=>{await api('/auth/logout',{method:'POST'}).catch(()=>null);location.reload();});
 
-const pageNames={overview:'概览',users:'用户管理',packages:'积分套餐',channels:'大模型渠道','video-channels':'视频生成渠道'};
+const pageNames={overview:'概览',users:'用户管理',packages:'积分套餐',channels:'大模型渠道','video-channels':'视频生成渠道','email-channel':'邮件服务'};
 $$('.nav-item').forEach((button)=>button.addEventListener('click',async()=>{
   $$('.nav-item').forEach(item=>item.classList.remove('active')); button.classList.add('active');
   $$('.page').forEach(page=>page.classList.add('hidden')); $(`#page-${button.dataset.page}`).classList.remove('hidden'); $('#page-name').textContent=pageNames[button.dataset.page];
   if(button.dataset.page==='overview')await loadOverview(); if(button.dataset.page==='users')await loadUsers(); if(button.dataset.page==='packages')await loadPackages(); if(button.dataset.page==='channels')await loadChannels(); if(button.dataset.page==='video-channels')await loadVideoChannels();
+  if(button.dataset.page==='email-channel')await loadEmailChannel();
 }));
 
 async function loadOverview(){
@@ -78,5 +94,23 @@ async function loadVideoChannels(){try{videoChannelsCache=await api('/video-chan
 $('#video-channel-form').addEventListener('submit',async(event)=>{event.preventDefault();const id=$('#video-channel-id').value;const payload={name:$('#video-channel-name').value,base_url:$('#video-channel-url').value,model_name:$('#video-channel-model').value,qps_limit:Number($('#video-channel-qps').value),default_seconds:$('#video-channel-seconds').value,default_size:$('#video-channel-size').value};if(!id||$('#video-channel-key').value)payload.api_key=$('#video-channel-key').value;if(!id)payload.is_active=$('#video-channel-active').checked;try{await api(id?`/video-channels/${id}`:'/video-channels',{method:id?'PATCH':'POST',body:JSON.stringify(payload)});notify(id?'视频渠道已更新':'视频渠道已新增');resetVideoChannelForm();await loadVideoChannels();}catch(error){notify(error.message);}});
 $('#video-channel-grid').addEventListener('click',async(event)=>{const edit=event.target.closest('[data-video-edit]');const activate=event.target.closest('[data-video-activate]');const disable=event.target.closest('[data-video-disable]');try{if(edit){const item=videoChannelsCache.find(row=>row.id===edit.dataset.videoEdit);$('#video-channel-id').value=item.id;$('#video-channel-name').value=item.name;$('#video-channel-url').value=item.base_url;$('#video-channel-model').value=item.model_name;$('#video-channel-qps').value=item.qps_limit;$('#video-channel-seconds').value=item.default_seconds;$('#video-channel-size').value=item.default_size;$('#video-channel-key').value='';$('#video-channel-key').required=false;$('#video-channel-key').placeholder='留空则保持原 Key';$('#video-channel-active').checked=item.is_active;$('#video-channel-active').disabled=true;$('#video-channel-save').textContent='保存修改';$('#video-channel-cancel').classList.remove('hidden');scrollTo({top:0,behavior:'smooth'});return;}if(activate){await api(`/video-channels/${activate.dataset.videoActivate}/activate`,{method:'POST'});notify('已切换当前视频渠道');}if(disable){await api(`/video-channels/${disable.dataset.videoDisable}/disable`,{method:'POST'});notify('视频渠道已停用');}await loadVideoChannels();}catch(error){notify(error.message);}});
 $('#video-channel-cancel').addEventListener('click',resetVideoChannelForm);
+
+async function loadEmailChannel(){
+  try{
+    const item=await api('/email-channel');
+    if(!item.configured){$('#email-channel-status').textContent='尚未配置邮件渠道';$('#email-channel-code').required=true;return;}
+    $('#email-channel-name').value=item.name;$('#email-channel-host').value=item.smtp_host;$('#email-channel-port').value=item.smtp_port;$('#email-channel-username').value=item.smtp_username;$('#email-channel-from-name').value=item.from_name;$('#email-channel-ssl').checked=item.use_ssl;$('#email-channel-active').checked=item.is_active;$('#email-channel-code').value='';$('#email-channel-code').required=false;$('#email-channel-code').placeholder='留空则保持原授权码';$('#email-test-recipient').value=item.smtp_username;$('#email-channel-status').textContent=`${item.is_active?'已启用':'已停用'} · ${item.smtp_username} · 更新于 ${formatDate(item.updated_at)}`;
+  }catch(error){notify(error.message);}
+}
+$('#email-channel-form').addEventListener('submit',async(event)=>{
+  event.preventDefault();
+  const payload={name:$('#email-channel-name').value,smtp_host:$('#email-channel-host').value,smtp_port:Number($('#email-channel-port').value),smtp_username:$('#email-channel-username').value,from_name:$('#email-channel-from-name').value,use_ssl:$('#email-channel-ssl').checked,is_active:$('#email-channel-active').checked};
+  if($('#email-channel-code').value)payload.auth_code=$('#email-channel-code').value;
+  try{await api('/email-channel',{method:'PUT',body:JSON.stringify(payload)});notify('邮件配置已安全保存');await loadEmailChannel();}catch(error){notify(error.message);}
+});
+$('#email-test-form').addEventListener('submit',async(event)=>{
+  event.preventDefault();const button=event.submitter;button.disabled=true;
+  try{const result=await api('/email-channel/test',{method:'POST',body:JSON.stringify({recipient:$('#email-test-recipient').value})});notify(result.message);}catch(error){notify(error.message);}finally{button.disabled=false;}
+});
 
 establishSession();

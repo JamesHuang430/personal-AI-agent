@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     admin_password: str = "change-this-admin-password"
     secret_key: str = "change-this-application-secret-key"
     session_ttl_seconds: int = 604800
+    public_url: str = "http://127.0.0.1:18000"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -16,6 +16,7 @@
       <form id="login-form">
         <label>用户名<input id="username" autocomplete="username" value="admin" required></label>
         <label>密码<input id="admin-password" type="password" autocomplete="current-password" required></label>
+        <label>验证码<span class="captcha-row"><input id="admin-captcha-answer" inputmode="numeric" autocomplete="off" placeholder="输入计算结果" required><button id="admin-captcha-question" type="button" title="点击刷新">加载中…</button></span></label>
         <button class="primary wide" type="submit">进入控制台 →</button>
       </form>
       <p class="secure-note">管理员会话使用 HttpOnly Cookie，API Key 加密保存</p>
@@ -31,6 +32,7 @@
         <button class="nav-item" data-page="packages" type="button"><span>◇</span>积分套餐</button>
         <button class="nav-item" data-page="channels" type="button"><span>⌁</span>模型渠道</button>
         <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
+        <button class="nav-item" data-page="email-channel" type="button"><span>✉</span>邮件服务</button>
       </nav>
       <div class="sidebar-foot"><span class="online-dot"></span>运营服务在线</div>
     </aside>
@@ -101,6 +103,27 @@
             <div class="form-actions"><button id="video-channel-save" class="primary" type="submit">新增视频渠道</button><button id="video-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="video-channel-grid" class="channel-grid"></div>
+        </section>
+
+        <section id="page-email-channel" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">EMAIL DELIVERY</p><h1>邮件服务</h1><p class="muted">配置注册验证码、测试邮件和密码重置邮件的 SMTP 渠道</p></div></div>
+          <div class="security-banner"><span>✉</span><div><strong>授权码安全</strong><p>SMTP 授权码加密入库，保存后不再回显；编辑时留空表示保持原授权码。</p></div></div>
+          <form id="email-channel-form" class="panel editor-form channel-form">
+            <label>渠道名称<input id="email-channel-name" value="163 SMTP" required></label>
+            <label>SMTP 主机<input id="email-channel-host" value="smtp.163.com" required></label>
+            <label>SMTP 端口<input id="email-channel-port" type="number" min="1" max="65535" value="465" required></label>
+            <label>发件邮箱<input id="email-channel-username" type="email" placeholder="your-account@163.com" required></label>
+            <label>SMTP 授权码<input id="email-channel-code" type="password" autocomplete="new-password" placeholder="首次配置必填"></label>
+            <label>发件人名称<input id="email-channel-from-name" value="知伴 AI" required></label>
+            <label class="switch-label"><input id="email-channel-ssl" type="checkbox" checked>使用 SSL/TLS</label>
+            <label class="switch-label"><input id="email-channel-active" type="checkbox" checked>启用邮件发送</label>
+            <div class="form-actions"><button id="email-channel-save" class="primary" type="submit">保存邮件配置</button></div>
+          </form>
+          <form id="email-test-form" class="panel email-test-form">
+            <div><h3>发送测试邮件</h3><p id="email-channel-status" class="muted">保存配置后可发送测试邮件</p></div>
+            <input id="email-test-recipient" type="email" placeholder="测试收件邮箱" required>
+            <button class="ghost" type="submit">发送测试邮件</button>
+          </form>
         </section>
       </div>
     </main>

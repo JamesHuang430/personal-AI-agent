@@ -6,12 +6,14 @@
 
 ## 当前能力
 
-- 邮箱注册与登录，全站每天最多注册 3 个用户；
+- 邮箱验证码注册与登录，全站每天最多注册 3 个用户；
+- 用户端和运营后台登录均有一次性计算验证码，支持邮件重置密码；
 - 每位用户每天签到一次并获得 100 积分；
 - 用户工作台、积分套餐展示和大模型对话界面；
 - 独立运营后台：用户启停、积分调整、套餐管理；
 - 大模型渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
 - 视频生成渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
+- 邮件渠道管理：运营后台配置 SMTP、加密授权码并发送测试邮件；
 - Agent 可按对话意图生成安全的文本类文件，并提供用户隔离的下载入口；
 - Agent 可创建异步视频任务，查询进度并在完成后下载结果；
 - 存活和依赖就绪检查；
@@ -87,12 +89,16 @@ docker compose --profile graph up -d
 - `GET /api/v1/health/live`：进程存活检查。
 - `GET /api/v1/health/ready`：PostgreSQL、Redis 就绪检查。
 - `POST /api/v1/auth/register`：邮箱注册。
+- `GET /api/v1/auth/captcha`：创建一次性登录验证码。
+- `POST /api/v1/auth/register/email-code`：发送注册邮箱验证码。
+- `POST /api/v1/auth/password-reset/request`：发送一次性密码重置链接。
 - `POST /api/v1/users/check-in`：每日签到。
 - `POST /api/v1/chat`：调用当前启用的大模型渠道。
 - `GET /api/v1/files`：列出当前用户由 Agent 生成的文件。
 - `GET /api/v1/videos`：列出当前用户的视频生成任务。
 - `GET /api/v1/admin/model-channels`：运营后台渠道清单（仅 `19000` 服务提供）。
 - `GET /api/v1/admin/video-channels`：运营后台视频渠道清单（仅 `19000` 服务提供）。
+- `GET /api/v1/admin/email-channel`：运营后台邮件渠道配置（授权码不回显）。
 - `GET /docs`：开发和测试环境的 OpenAPI 页面；生产环境关闭。
 
 ## 安全说明

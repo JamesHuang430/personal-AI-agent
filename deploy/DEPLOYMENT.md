@@ -9,7 +9,7 @@
 - Running profiles: base only
 - Base services: `nginx`, `assistant-api`, `admin-api`, `postgres`, `redis`
 - Deferred profiles: `storage` (MinIO), `graph` (Neo4j)
-- Alembic head: `20260820_0004`
+- Alembic head: `20260820_0005`
 - pgvector: enabled
 
 ## Legacy service status
@@ -29,7 +29,7 @@ Verification after cutover:
 
 - API liveness: OK
 - PostgreSQL and Redis readiness: OK
-- Alembic head: `20260820_0004`
+- Alembic head: `20260820_0005`
 - pgvector: `0.8.6`
 - Nginx is the only public Web entry point. Application APIs, PostgreSQL and
   Redis remain internal.

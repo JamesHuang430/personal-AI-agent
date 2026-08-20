@@ -1,0 +1,157 @@
+name: personal-ai-assistant
+
+x-runtime-defaults: &runtime-defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  assistant-api:
+    <<: *runtime-defaults
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}
+    image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
+    environment:
+      ASSISTANT_ENVIRONMENT: production
+      ASSISTANT_LOG_LEVEL: ${ASSISTANT_LOG_LEVEL:-INFO}
+      ASSISTANT_LOG_JSON: "true"
+      ASSISTANT_CORS_ORIGINS: ${ASSISTANT_CORS_ORIGINS:-https://assistant.example.com}
+      ASSISTANT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-assistant}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-assistant}
+      ASSISTANT_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ASSISTANT_API_PORT:-18000}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - edge_net
+      - app_net
+      - data_net
+
+  postgres:
+    <<: *runtime-defaults
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-assistant}
+      POSTGRES_USER: ${POSTGRES_USER:-assistant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data_net
+
+  redis:
+    <<: *runtime-defaults
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - redis_data:/data
+    networks:
+      - data_net
+
+  minio:
+    <<: *runtime-defaults
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: ["storage"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-assistant-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-before-enabling-storage}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - data_net
+
+  neo4j:
+    <<: *runtime-defaults
+    image: neo4j:5.26-community
+    profiles: ["graph"]
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-before-enabling-graph}
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 768m
+      NEO4J_server_memory_pagecache_size: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - data_net
+
+  caddy:
+    <<: *runtime-defaults
+    image: caddy:2.10-alpine
+    profiles: ["ingress"]
+    environment:
+      ASSISTANT_DOMAIN: ${ASSISTANT_DOMAIN:-assistant.invalid}
+    depends_on:
+      assistant-api:
+        condition: service_healthy
+    ports:
+      - "${ASSISTANT_HTTP_PORT:-80}:80"
+      - "${ASSISTANT_HTTPS_PORT:-443}:443"
+      - "${ASSISTANT_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  neo4j_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge_net:
+  app_net:
+  data_net:
+    internal: true

@@ -4,7 +4,7 @@
 - Project path: `/home/ubuntu/code/ai-agent`
 - Compose project: `personal-ai-assistant`
 - Application image: `personal-ai-assistant-api:0.1.0`
-- API binding: `127.0.0.1:18000 -> 8000`
+- API binding: `0.0.0.0:18000 -> 8000`
 - Running profiles: base only
 - Running services: `assistant-api`, `postgres`, `redis`
 - Deferred profiles: `storage` (MinIO), `graph` (Neo4j), `ingress` (Caddy)
@@ -30,7 +30,7 @@ Verification after cutover:
 - PostgreSQL and Redis readiness: OK
 - Alembic head: `20260820_0001`
 - pgvector: `0.8.6`
-- New API is bound only to `127.0.0.1:18000`
+- New API is published on `0.0.0.0:18000`; PostgreSQL and Redis remain internal
 
 ## Update command
 

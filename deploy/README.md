@@ -9,7 +9,7 @@ cd /home/ubuntu/code/ai-agent
 ./deploy/deploy.sh
 ```
 
-The base deployment binds the API to `127.0.0.1:18000` and starts PostgreSQL
+The base deployment publishes the API on `0.0.0.0:18000` and starts PostgreSQL
 and Redis. It does not start MinIO, Neo4j, or Caddy. This lets it run next to
 the existing `deploy-*` containers without a port cutover. MinIO is kept in the
 `storage` profile because the current API does not expose document uploads yet.

@@ -29,6 +29,8 @@ def test_root_serves_user_interface() -> None:
     assert "私人 AI 助理" in response.text
     assert '<select id="model-select"' in response.text
     assert 'id="model-custom"' in response.text
+    assert 'id="video-gallery-list"' in response.text
+    assert 'id="refresh-video-gallery"' in response.text
 
 
 def test_chat_requires_user_selected_model() -> None:

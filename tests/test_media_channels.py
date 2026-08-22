@@ -1,10 +1,17 @@
+from uuid import uuid4
+
 from assistant_app.api.routes.admin import (
     MusicChannelCreatePayload,
     SpeechChannelCreatePayload,
     VideoChannelCreatePayload,
 )
+from assistant_app.db.models import VideoJob
 from assistant_app.services.model_gateway import AGENT_TOOLS
-from assistant_app.services.video_gateway import _minimax_ratio, _minimax_video_urls
+from assistant_app.services.video_gateway import (
+    _minimax_ratio,
+    _minimax_video_urls,
+    video_job_payload,
+)
 
 
 def test_minimax_video_channel_defaults() -> None:
@@ -69,3 +76,20 @@ def test_agent_exposes_video_speech_and_music_tools() -> None:
     tool_names = {tool["function"]["name"] for tool in AGENT_TOOLS}
 
     assert {"generate_video", "generate_speech", "generate_music"}.issubset(tool_names)
+
+
+def test_completed_video_exposes_separate_preview_and_download_urls() -> None:
+    job = VideoJob(
+        id=uuid4(),
+        user_id=uuid4(),
+        channel_id=uuid4(),
+        prompt="rainy bus stop",
+        status="completed",
+        seconds="4",
+        size="720x1280",
+    )
+
+    payload = video_job_payload(job)
+
+    assert payload["preview_url"] == f"/api/v1/videos/{job.id}/preview"
+    assert payload["download_url"] == f"/api/v1/videos/{job.id}/download"

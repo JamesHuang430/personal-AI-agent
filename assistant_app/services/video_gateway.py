@@ -239,4 +239,7 @@ def video_job_payload(job: VideoJob) -> dict[str, object]:
         "download_url": (
             f"/api/v1/videos/{job.id}/download" if job.status == "completed" else None
         ),
+        "preview_url": (
+            f"/api/v1/videos/{job.id}/preview" if job.status == "completed" else None
+        ),
     }

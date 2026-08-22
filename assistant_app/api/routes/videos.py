@@ -95,3 +95,18 @@ async def download_video(
     if job.status != "completed" or not available:
         raise HTTPException(status_code=409, detail="视频尚未生成完成")
     return FileResponse(job.storage_path, media_type="video/mp4", filename=f"video-{job.id}.mp4")
+
+
+@router.get("/{job_id}/preview", response_class=FileResponse)
+async def preview_video(
+    job_id: UUID,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> FileResponse:
+    """Stream an owned completed video inline for the director workspace player."""
+
+    job = await _owned_job(request.app.state.runtime, user.id, job_id)
+    available = job.storage_path and await asyncio.to_thread(Path(job.storage_path).is_file)
+    if job.status != "completed" or not available:
+        raise HTTPException(status_code=409, detail="视频尚未生成完成")
+    return FileResponse(job.storage_path, media_type="video/mp4")

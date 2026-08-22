@@ -12,6 +12,7 @@ let registrationCodeSent = false;
 let modelsLoading = false;
 let sessionNeedsOrganization = false;
 let organizingSession = false;
+let videoGalleryTimer = null;
 const customModelValue = '__custom__';
 const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token');
 const initialWelcomeMarkup = $('#messages').innerHTML;
@@ -92,6 +93,7 @@ function showApp(user) {
   loadModels();
   loadAgentRouting();
   loadConversations();
+  loadVideoGallery();
 }
 
 async function loadConversations() {
@@ -849,6 +851,97 @@ function switchWorkspace(mode) {
   });
   setSidebarOpen(false);
   window.localStorage.setItem('assistant-workspace', mode);
+  if (isStudio && currentUser) loadVideoGallery();
+}
+
+function videoStatusLabel(status) {
+  return { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[status] || status;
+}
+
+function videoCreatedAt(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function renderStudioVideo(job) {
+  const card = document.createElement('article');
+  card.className = `video-result-card ${job.status}`;
+
+  const media = document.createElement('div');
+  media.className = 'video-result-media';
+  const [width, height] = String(job.size || '').split('x').map(Number);
+  if (width > height) media.classList.add('landscape');
+
+  if (job.status === 'completed' && job.download_url) {
+    const video = document.createElement('video');
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.src = job.preview_url || job.download_url;
+    video.setAttribute('aria-label', `生成视频：${job.prompt}`);
+    media.appendChild(video);
+  } else {
+    const state = document.createElement('div');
+    state.className = 'video-result-state';
+    state.innerHTML = `<span>${job.status === 'failed' ? '!' : '◌'}</span><strong>${escapeHtml(videoStatusLabel(job.status))}</strong>`;
+    media.appendChild(state);
+  }
+
+  const detail = document.createElement('div');
+  detail.className = 'video-result-detail';
+  const heading = document.createElement('div');
+  heading.className = 'video-result-heading';
+  heading.innerHTML = `<strong>真实生成镜头</strong><em>${escapeHtml(videoStatusLabel(job.status))}</em>`;
+  const meta = document.createElement('small');
+  meta.textContent = `${job.seconds} 秒 · ${job.size}${videoCreatedAt(job.created_at) ? ` · ${videoCreatedAt(job.created_at)}` : ''}`;
+  const prompt = document.createElement('p');
+  prompt.textContent = job.prompt;
+  detail.append(heading, meta, prompt);
+
+  if (job.status === 'completed' && job.download_url) {
+    const download = document.createElement('a');
+    download.href = job.download_url;
+    download.textContent = '下载 MP4 ↓';
+    detail.appendChild(download);
+  } else if (job.status === 'failed') {
+    const error = document.createElement('b');
+    error.textContent = job.error_message || '视频渠道返回失败';
+    detail.appendChild(error);
+  }
+
+  card.append(media, detail);
+  return card;
+}
+
+async function loadVideoGallery() {
+  if (!currentUser) return;
+  window.clearTimeout(videoGalleryTimer);
+  const list = $('#video-gallery-list');
+  const summary = $('#video-gallery-summary');
+  const refresh = $('#refresh-video-gallery');
+  refresh.disabled = true;
+  try {
+    const jobs = await api('/videos');
+    list.replaceChildren();
+    if (!jobs.length) {
+      list.innerHTML = '<div class="video-gallery-empty"><span>▶</span><strong>还没有真实成片</strong><small>视频任务完成后会自动出现在这里</small></div>';
+      summary.textContent = '生成中的视频会自动刷新，完成后可直接播放和下载';
+      return;
+    }
+
+    const visibleJobs = jobs.slice(0, 12);
+    list.append(...visibleJobs.map(renderStudioVideo));
+    const completed = jobs.filter((job) => job.status === 'completed').length;
+    const active = jobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
+    summary.textContent = `${completed} 条成片${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
+    if (active) videoGalleryTimer = window.setTimeout(loadVideoGallery, 5000);
+  } catch (error) {
+    list.innerHTML = `<div class="video-gallery-empty failed"><span>!</span><strong>成片记录加载失败</strong><small>${escapeHtml(error.message)}</small></div>`;
+    summary.textContent = '暂时无法读取真实生成记录';
+  } finally {
+    refresh.disabled = false;
+  }
 }
 
 function renderProductionStage(key) {
@@ -977,6 +1070,7 @@ $('#view-deliverable').addEventListener('click', () => $('#shot-heading').scroll
 $('#new-project').addEventListener('click', () => notify('新项目向导：将从一句故事创意开始'));
 $('#project-settings').addEventListener('click', () => notify('制作设定包含画幅、时长、风格、预算与发布平台'));
 $('#show-all-shots').addEventListener('click', () => notify('全片共 24 镜，当前展示场次 07 的关键镜头'));
+$('#refresh-video-gallery').addEventListener('click', loadVideoGallery);
 $('#studio-guide').addEventListener('click', showStudioGuide);
 $('#studio-guide-close').addEventListener('click', () => $('#studio-guide-dialog').close());
 $('#studio-guide-done').addEventListener('click', () => $('#studio-guide-dialog').close());

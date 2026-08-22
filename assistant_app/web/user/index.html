@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 私人 AI 助理与导演工作室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.5">
+  <link rel="stylesheet" href="/static/styles.css?v=0.6">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -276,6 +276,16 @@
               <button class="shot-card pending" type="button"><div class="shot-frame frame-pending"><span>14</span><i>等待生成</i></div><strong>隔街错身</strong><small>镜头生成未开始</small></button>
             </div>
           </section>
+
+          <section class="video-gallery" aria-labelledby="video-gallery-heading">
+            <div class="section-heading compact">
+              <div><span class="section-index">04</span><div><h2 id="video-gallery-heading">真实生成 · 成片展示</h2><p id="video-gallery-summary">正在读取属于你的 MiniMax H3 生成记录</p></div></div>
+              <button id="refresh-video-gallery" class="text-action" type="button">刷新成片 ↻</button>
+            </div>
+            <div id="video-gallery-list" class="video-gallery-list" aria-live="polite">
+              <div class="video-gallery-empty"><span>▶</span><strong>正在加载生成记录</strong><small>完成后可以在这里直接播放和下载 MP4</small></div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -345,6 +355,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.6" defer></script>
+  <script src="/static/app.js?v=0.7" defer></script>
 </body>
 </html>

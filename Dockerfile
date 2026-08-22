@@ -19,16 +19,24 @@ RUN groupadd --system assistant \
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
+
+# Install third-party dependencies before application sources so routine code changes
+# do not invalidate the dependency and local embedding-model layers.
+RUN mkdir -p assistant_app \
+    && touch assistant_app/__init__.py \
+    && python -m pip install . \
+    && rm -rf assistant_app
+
+RUN mkdir -p /opt/fastembed \
+    && python -c "import os,tarfile,urllib.request; archive='/tmp/bge-small-zh-v1.5.tar.gz'; urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data'); os.unlink(archive)" \
+    && python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/opt/fastembed', local_files_only=True)"
+
 COPY assistant_app ./assistant_app
 COPY alembic.ini ./
 COPY migrations ./migrations
 
 RUN chmod -R a+rX /app \
-    && python -m pip install .
-
-RUN mkdir -p /opt/fastembed \
-    && python -c "import os,tarfile,urllib.request; archive='/tmp/bge-small-zh-v1.5.tar.gz'; urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data'); os.unlink(archive)" \
-    && python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/opt/fastembed', local_files_only=True)"
+    && python -m pip install --no-deps .
 
 ENV ASSISTANT_MEMORY_EMBEDDING_PROVIDER=local \
     ASSISTANT_MEMORY_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \

@@ -820,22 +820,112 @@ document.querySelectorAll('.shot-card').forEach((button) => {
   });
 });
 $('#continue-production').addEventListener('click', () => {
-  renderProductionStage('storyboard');
+  const current = document.querySelector('[data-stage][aria-pressed="true"]');
+  renderProductionStage(current?.dataset.stage || 'storyboard');
   $('#stage-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
-$('#approve-stage').addEventListener('click', () => {
+function updateStudioProgress() {
+  const stages = [...document.querySelectorAll('[data-stage]')];
+  const completed = stages.filter((item) => item.classList.contains('done')).length;
+  const progress = Math.round((completed / stages.length) * 100);
+  $('.director-progress strong').textContent = `${progress}%`;
+  $('.director-progress i').style.width = `${progress}%`;
+}
+
+function latestVideoJobText(job) {
+  if (!job) return '还没有提交过真实视频任务。';
+  const labels = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '失败' };
+  const status = labels[job.status] || job.status;
+  return job.status === 'failed' && job.error_message
+    ? `最近一次任务：${status}，${job.error_message}`
+    : `最近一次任务：${status}。`;
+}
+
+async function loadVideoReadiness() {
+  const panel = $('#video-readiness');
+  const mark = panel.querySelector('.readiness-mark');
+  const title = $('#video-readiness-title');
+  const detail = $('#video-readiness-detail');
+  panel.classList.remove('ready', 'blocked');
+  panel.classList.add('checking');
+  mark.textContent = '…';
+  title.textContent = '正在检查真实生成条件';
+  detail.textContent = '确认是否已经启用视频渠道，以及最近一次生成任务的结果。';
+  $('#guide-refresh-status').disabled = true;
+  try {
+    const result = await api('/videos/status');
+    panel.classList.remove('checking');
+    panel.classList.add(result.ready ? 'ready' : 'blocked');
+    mark.textContent = result.ready ? '✓' : '!';
+    title.textContent = result.ready
+      ? `可以真实生成 · ${result.model}`
+      : '暂时不能真实生成 · 视频渠道未启用';
+    const audio = result.native_audio ? '该模型默认生成原生声音。' : '';
+    detail.textContent = `${audio}${latestVideoJobText(result.latest_job)}`;
+    return result;
+  } catch (error) {
+    panel.classList.remove('checking');
+    panel.classList.add('blocked');
+    mark.textContent = '!';
+    title.textContent = '生成状态检查失败';
+    detail.textContent = error.message;
+    return { ready: false };
+  } finally {
+    $('#guide-refresh-status').disabled = false;
+  }
+}
+
+async function showStudioGuide() {
+  $('#studio-guide-dialog').showModal();
+  return loadVideoReadiness();
+}
+
+$('#approve-stage').addEventListener('click', async () => {
   const current = document.querySelector('[data-stage][aria-pressed="true"]');
   if (!current) return;
+  if (current.dataset.stage === 'video') {
+    const status = await showStudioGuide();
+    notify(status.ready
+      ? '视频渠道已就绪；请从知识对话向视频 Agent 提交真实镜头任务'
+      : '视频渠道尚未启用，暂时不能进入真实镜头生成');
+    return;
+  }
   current.classList.add('done');
+  current.classList.remove('active');
   current.querySelector('em').textContent = '已通过';
-  $('#stage-status').textContent = '已采纳，正在流转';
-  notify('总导演已接收，本环节交付物已进入下一关');
+  const stages = [...document.querySelectorAll('[data-stage]')];
+  const next = stages[stages.indexOf(current) + 1];
+  if (next) {
+    next.classList.add('active');
+    renderProductionStage(next.dataset.stage);
+    $('#stage-status').textContent = '已流转到下一关';
+    notify('总导演已接收，下一位专业 Agent 开始把关');
+  } else {
+    $('#stage-status').textContent = '八道门禁已完成';
+    notify('流程验收完成；真实项目将在这里提供终版下载');
+  }
+  updateStudioProgress();
 });
 $('#request-revision').addEventListener('click', () => notify('已创建修改意见，负责 Agent 将保留当前版本并生成新方案'));
 $('#view-deliverable').addEventListener('click', () => $('#shot-heading').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 $('#new-project').addEventListener('click', () => notify('新项目向导：将从一句故事创意开始'));
 $('#project-settings').addEventListener('click', () => notify('制作设定包含画幅、时长、风格、预算与发布平台'));
 $('#show-all-shots').addEventListener('click', () => notify('全片共 24 镜，当前展示场次 07 的关键镜头'));
+$('#studio-guide').addEventListener('click', showStudioGuide);
+$('#studio-guide-close').addEventListener('click', () => $('#studio-guide-dialog').close());
+$('#studio-guide-done').addEventListener('click', () => $('#studio-guide-dialog').close());
+$('#guide-refresh-status').addEventListener('click', loadVideoReadiness);
+$('#guide-go-chat').addEventListener('click', () => {
+  $('#studio-guide-dialog').close();
+  switchWorkspace('chat');
+  const input = $('#chat-input');
+  input.value = '请让视频 Agent 根据已确认的分镜生成一个 4 秒、16:9 的 MiniMax H3 镜头，并保留原生声音。镜头描述：';
+  input.dispatchEvent(new Event('input'));
+  input.focus();
+  notify('镜头指令已准备好；补充画面描述后再发送');
+});
+
+updateStudioProgress();
 
 const initialWorkspace = window.localStorage.getItem('assistant-workspace');
 if (initialWorkspace === 'studio') switchWorkspace('studio');

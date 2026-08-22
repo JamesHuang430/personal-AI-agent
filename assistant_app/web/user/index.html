@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 私人 AI 助理与导演工作室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.3">
+  <link rel="stylesheet" href="/static/styles.css?v=0.4">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -183,6 +183,7 @@
               <p>都市情感 · 竖屏 9:16 · 预计 1′42″ · 24 个镜头</p>
             </div>
             <div class="production-actions">
+              <button id="studio-guide" class="ghost-btn guide-btn" type="button">？ 使用指南</button>
               <button id="project-settings" class="ghost-btn" type="button">制作设定</button>
               <button id="continue-production" class="studio-primary" type="button">继续制作 <span>→</span></button>
             </div>
@@ -310,7 +311,40 @@
     </div>
   </dialog>
 
+  <dialog id="studio-guide-dialog" class="modal studio-guide-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">DIRECTOR CONSOLE GUIDE</p><h2>短剧制作使用指南</h2></div>
+      <button id="studio-guide-close" class="close-btn" type="button" aria-label="关闭使用指南">×</button>
+    </div>
+    <p class="guide-intro">这套控制台用于逐关审阅 Agent 的判断与交付物。先确认故事和分镜，再让视频模型生成镜头；每一关都可以退回修改，不需要一次接受全部结果。</p>
+
+    <section id="video-readiness" class="video-readiness checking" aria-live="polite">
+      <span class="readiness-mark">…</span>
+      <div><strong id="video-readiness-title">正在检查真实生成条件</strong><p id="video-readiness-detail">确认是否已经启用视频渠道，以及最近一次生成任务的结果。</p></div>
+      <button id="guide-refresh-status" type="button">重新检测</button>
+    </section>
+
+    <ol class="guide-steps">
+      <li><span>01</span><div><strong>新建项目并填写制作设定</strong><p>从一句故事创意开始，确认目标时长、横竖屏、风格、发布平台和预算。当前“雨停之前”是流程演示项目，不是已经保存的真实成片项目。</p></div></li>
+      <li><span>02</span><div><strong>逐个点击八道门禁审阅</strong><p>点击上方任一门禁可查看负责 Agent 的判断摘要、证据和交付物；总导演只统筹，不替代各专业 Agent 验收。</p></div></li>
+      <li><span>03</span><div><strong>修改或采纳并流转</strong><p>不满意就点“提出修改”；确认后点“采纳并流转”，本关才会通过并进入下一关。分镜没有锁定前，不应开始批量生成镜头。</p></div></li>
+      <li><span>04</span><div><strong>到“镜头生成”门禁调用视频模型</strong><p>必须先由运营后台启用可用的视频渠道。MiniMax H3 会原生生成带声音的视频；只有固定声纹、独立旁白或可替换配乐时，声音 Agent 才额外调用音频模型。</p></div></li>
+      <li><span>05</span><div><strong>声音质检、剪辑合成与终审</strong><p>声音 Agent 检查对白、口型和声场；剪辑 Agent 组接镜头；监制 Agent 完成连续性、版权和平台合规检查后，才形成可下载的最终视频。</p></div></li>
+    </ol>
+
+    <section class="guide-controls">
+      <h3>页面按钮怎么用</h3>
+      <div><strong>继续制作</strong><span>回到当前正在处理的门禁和交付物。</span></div>
+      <div><strong>点击门禁</strong><span>查看对应 Agent 的思考摘要、依据与验收结果。</span></div>
+      <div><strong>查看画板</strong><span>核对镜头构图、时长、运镜和相邻镜头关系。</span></div>
+      <div><strong>采纳并流转</strong><span>批准当前交付物并交给下一位 Agent，不代表视频已经生成。</span></div>
+    </section>
+
+    <div class="guide-boundary"><strong>当前版本说明</strong><p>导演工作室目前是可交互的制作流程演示；真实单镜头生成可先从“知识对话”向视频 Agent 下达指令。导演工作室内的一键批量派单与项目持久化仍需后续接入。</p></div>
+    <div class="guide-actions"><button id="guide-go-chat" class="ghost-btn" type="button">去知识对话准备镜头指令</button><button id="studio-guide-done" class="studio-primary" type="button">我知道怎么用了</button></div>
+  </dialog>
+
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.3" defer></script>
+  <script src="/static/app.js?v=0.4" defer></script>
 </body>
 </html>

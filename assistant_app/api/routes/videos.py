@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 
 from assistant_app.api.dependencies import current_user
-from assistant_app.db.models import User, VideoJob
+from assistant_app.db.models import User, VideoChannel, VideoJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.video_gateway import video_job_payload
 
@@ -42,6 +42,36 @@ async def list_video_jobs(
             )
         ).all()
     return [video_job_payload(row) for row in rows]
+
+
+@router.get("/status")
+async def video_generation_status(
+    request: Request, user: Annotated[User, Depends(current_user)]
+) -> dict[str, object]:
+    """Expose safe readiness details for the director workspace guide."""
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        channel = await session.scalar(
+            select(VideoChannel).where(VideoChannel.is_active.is_(True))
+        )
+        latest_job = await session.scalar(
+            select(VideoJob)
+            .where(VideoJob.user_id == user.id)
+            .order_by(desc(VideoJob.created_at))
+            .limit(1)
+        )
+    native_audio = bool(
+        channel
+        and channel.provider == "minimax"
+        and channel.model_name.casefold() == "minimax-h3"
+    )
+    return {
+        "ready": channel is not None,
+        "provider": channel.provider if channel else None,
+        "model": channel.model_name if channel else None,
+        "native_audio": native_audio,
+        "latest_job": video_job_payload(latest_job) if latest_job else None,
+    }
 
 
 @router.get("/{job_id}")

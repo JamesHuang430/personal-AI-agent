@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -131,6 +132,23 @@ def _minimax_ratio(size: str) -> str:
     return "9:16" if height > width else "16:9"
 
 
+def _minimax_video_urls(base_url: str, task_id: str | None = None) -> tuple[str, str]:
+    """Return create/query URLs for official MiniMax or AI Ping's H3 gateway."""
+    normalized = base_url.rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.hostname in {"aiping.cn", "www.aiping.cn"}:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        prefix = f"{origin}/api/v1/multimodal/minimax/videos"
+        return (
+            f"{prefix}/video_generation",
+            f"{prefix}/query/video_generation/{task_id or '{task_id}'}",
+        )
+    return (
+        f"{normalized}/v2/video_generation",
+        f"{normalized}/v2/query/video_generation/{task_id or '{task_id}'}",
+    )
+
+
 async def _run_minimax_video(
     channel: VideoChannel,
     job: VideoJob,
@@ -138,7 +156,7 @@ async def _run_minimax_video(
     runtime: RuntimeDependencies,
     job_id: UUID,
 ) -> bytes:
-    base_url = channel.base_url.rstrip("/")
+    create_url, _ = _minimax_video_urls(channel.base_url)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": channel.model_name,
@@ -150,7 +168,7 @@ async def _run_minimax_video(
     timeout = httpx.Timeout(900.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         response = await client.post(
-            f"{base_url}/v2/video_generation",
+            create_url,
             headers=headers,
             json=payload,
         )
@@ -160,12 +178,13 @@ async def _run_minimax_video(
         if not task_id:
             raise VideoProviderError("MiniMax 未返回 task_id")
         await _update_job(runtime, job_id, provider_job_id=task_id)
+        _, query_url = _minimax_video_urls(channel.base_url, task_id)
 
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
             await asyncio.sleep(5)
             result = await client.get(
-                f"{base_url}/v2/query/video_generation/{task_id}",
+                query_url,
                 headers=headers,
             )
             if result.status_code != 200:

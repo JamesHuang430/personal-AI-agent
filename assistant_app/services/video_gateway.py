@@ -164,6 +164,7 @@ async def _run_minimax_video(
         "resolution": channel.default_resolution,
         "duration": int(job.seconds),
         "ratio": _minimax_ratio(job.size),
+        "generate_audio": True,
     }
     timeout = httpx.Timeout(900.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:

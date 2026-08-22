@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 私人 AI 助理与导演工作室</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=0.3">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -109,10 +109,11 @@
       </div>
       <div class="sidebar-footer"><span class="status-dot"></span> 1 位总导演 + 8 位把关 Agent</div>
     </aside>
+    <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="关闭侧边栏"></button>
 
     <main class="workspace">
       <header class="topbar">
-        <button id="mobile-menu" class="icon-btn mobile-only" type="button">☰</button>
+        <button id="mobile-menu" class="icon-btn mobile-only" type="button" aria-label="打开项目列表" aria-expanded="false">☰</button>
         <div class="workspace-title"><strong id="workspace-title">知识对话</strong><span id="workspace-subtitle">边问边沉淀你的个人知识库</span></div>
         <div class="top-actions">
           <button id="memory-btn" class="memory-pill" type="button">⌘ 个人知识库</button>
@@ -276,6 +277,12 @@
           </section>
         </div>
       </section>
+
+      <nav class="mobile-mode-nav" aria-label="手机端主导航">
+        <button class="active" type="button" data-workspace="chat"><span>◇</span><strong>知识对话</strong></button>
+        <button type="button" data-workspace="studio"><span>▶</span><strong>导演工作室</strong></button>
+        <button id="mobile-memory-btn" type="button"><span>⌘</span><strong>知识库</strong></button>
+      </nav>
     </main>
   </div>
 
@@ -304,6 +311,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=0.3" defer></script>
 </body>
 </html>

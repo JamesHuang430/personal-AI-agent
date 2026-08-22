@@ -134,6 +134,7 @@ async function openConversation(conversationId) {
     sessionNeedsOrganization = false;
     $('#organize-session').disabled = false;
     $('#session-memory-status').textContent = '历史会话已载入；可以继续对话，或再次整理到个人知识库';
+    setSidebarOpen(false);
     await loadConversations();
   } catch (error) {
     notify(error.message);
@@ -491,6 +492,7 @@ async function showMemory() {
 }
 
 $('#memory-btn').addEventListener('click', showMemory);
+$('#mobile-memory-btn').addEventListener('click', showMemory);
 $('#memory-close').addEventListener('click', () => $('#memory-dialog').close());
 
 function escapeHtml(value) {
@@ -668,7 +670,13 @@ $('#new-chat').addEventListener('click', async () => {
   if (sessionNeedsOrganization) await organizeCurrentConversation();
   resetConversationView();
 });
-$('#mobile-menu').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
+function setSidebarOpen(open) {
+  $('.sidebar').classList.toggle('open', open);
+  $('#mobile-menu').setAttribute('aria-expanded', String(open));
+}
+
+$('#mobile-menu').addEventListener('click', () => setSidebarOpen(!$('.sidebar').classList.contains('open')));
+$('#sidebar-scrim').addEventListener('click', () => setSidebarOpen(false));
 
 const productionStages = {
   concept: {
@@ -741,7 +749,7 @@ function switchWorkspace(mode) {
   document.querySelectorAll('[data-workspace]').forEach((button) => {
     button.classList.toggle('active', button.dataset.workspace === mode);
   });
-  $('.sidebar').classList.remove('open');
+  setSidebarOpen(false);
   window.localStorage.setItem('assistant-workspace', mode);
 }
 

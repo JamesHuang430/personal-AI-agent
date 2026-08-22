@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>知伴 · 运营控制台</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=0.6">
 </head>
 <body>
   <section id="login-view" class="login-shell">
@@ -90,18 +90,19 @@
         <section id="page-video-channels" class="page hidden">
           <div class="page-heading"><div><p class="eyebrow purple">VIDEO PROVIDERS</p><h1>视频生成渠道</h1><p class="muted">配置 MiniMax H3 或 OpenAI Videos API 渠道、默认画面参数和全局 QPS</p></div></div>
           <div class="security-banner"><span>▶</span><div><strong>异步视频任务</strong><p>用户提出视频生成要求后，Agent 自动提交任务并轮询结果；API Key 加密入库且不回显。</p></div></div>
+          <div id="video-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的视频渠道</strong><p>视频生成暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
           <form id="video-channel-form" class="panel editor-form channel-form">
             <input id="video-channel-id" type="hidden">
             <label>渠道名称<input id="video-channel-name" placeholder="如：视频主渠道" required></label>
             <label>协议<select id="video-channel-provider"><option value="minimax">MiniMax H3（官方 / AI Ping）</option><option value="openai">OpenAI Videos</option></select></label>
-            <label>Base URL<input id="video-channel-url" type="url" value="https://aiping.cn" required></label>
+            <label>Base URL<input id="video-channel-url" type="url" value="https://api.minimaxi.com" required></label>
             <label>API Key<input id="video-channel-key" type="password" placeholder="sk-..." required></label>
             <label>模型名<input id="video-channel-model" value="MiniMax-H3" required></label>
             <label>QPS 限制<input id="video-channel-qps" type="number" min="1" max="1000" value="1" required></label>
             <label>默认时长<select id="video-channel-seconds"><option value="4">4 秒</option><option value="8">8 秒</option><option value="12">12 秒</option></select></label>
             <label>默认尺寸<select id="video-channel-size"><option value="1280x720">1280×720 横屏</option><option value="720x1280">720×1280 竖屏</option><option value="1792x1024">1792×1024 横屏</option><option value="1024x1792">1024×1792 竖屏</option></select></label>
             <label>MiniMax 清晰度<select id="video-channel-resolution"><option value="768P">768P（测试/预览）</option><option value="2K">2K（成片）</option></select></label>
-            <label class="switch-label"><input id="video-channel-active" type="checkbox">保存后立即启用</label>
+            <label class="switch-label"><input id="video-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
             <div class="form-actions"><button id="video-channel-save" class="primary" type="submit">新增视频渠道</button><button id="video-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="video-channel-grid" class="channel-grid"></div>
@@ -110,15 +111,16 @@
         <section id="page-music-channels" class="page hidden">
           <div class="page-heading"><div><p class="eyebrow purple">MUSIC PROVIDERS</p><h1>音乐模型渠道</h1><p class="muted">为短剧生成主题曲、背景音乐和氛围配乐；对白与旁白将由后续 Speech 配音渠道负责</p></div></div>
           <div class="security-banner"><span>♫</span><div><strong>MiniMax Music 异步产物</strong><p>音乐任务完成后保存到本地生成文件卷，API Key 加密入库且不回显。</p></div></div>
+          <div id="music-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的音乐渠道</strong><p>音乐生成暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
           <form id="music-channel-form" class="panel editor-form channel-form">
             <input id="music-channel-id" type="hidden">
             <label>渠道名称<input id="music-channel-name" value="MiniMax Music" required></label>
-            <label>Base URL<input id="music-channel-url" type="url" value="https://api.minimax.io" required></label>
+            <label>Base URL<input id="music-channel-url" type="url" value="https://api.minimaxi.com" required></label>
             <label>API Key<input id="music-channel-key" type="password" placeholder="sk-..." required></label>
             <label>模型名<input id="music-channel-model" value="music-2.6" required></label>
             <label>QPS 限制<input id="music-channel-qps" type="number" min="1" max="1000" value="1" required></label>
             <label>默认格式<select id="music-channel-format"><option value="mp3">MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option></select></label>
-            <label class="switch-label"><input id="music-channel-active" type="checkbox">保存后立即启用</label>
+            <label class="switch-label"><input id="music-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
             <div class="form-actions"><button id="music-channel-save" class="primary" type="submit">新增音乐渠道</button><button id="music-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="music-channel-grid" class="channel-grid"></div>
@@ -148,6 +150,6 @@
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.4" defer></script>
+  <script src="/static/app.js?v=0.5" defer></script>
 </body>
 </html>

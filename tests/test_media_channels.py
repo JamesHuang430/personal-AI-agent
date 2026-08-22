@@ -9,13 +9,13 @@ from assistant_app.services.video_gateway import _minimax_ratio, _minimax_video_
 def test_minimax_video_channel_defaults() -> None:
     payload = VideoChannelCreatePayload(
         name="MiniMax H3",
-        base_url="https://api.minimax.io/",
+        base_url="https://api.minimaxi.com/",
         api_key="secret",
         model_name="MiniMax-H3",
         provider="minimax",
     )
 
-    assert payload.base_url == "https://api.minimax.io"
+    assert payload.base_url == "https://api.minimaxi.com"
     assert payload.default_resolution == "768P"
     assert _minimax_ratio("1280x720") == "16:9"
     assert _minimax_ratio("720x1280") == "9:16"
@@ -23,14 +23,14 @@ def test_minimax_video_channel_defaults() -> None:
 
 def test_minimax_video_urls_support_official_and_aiping() -> None:
     official_create, official_query = _minimax_video_urls(
-        "https://api.minimax.io/", "task-1"
+        "https://api.minimaxi.com/", "task-1"
     )
     aiping_create, aiping_query = _minimax_video_urls(
         "https://aiping.cn/api/v1", "task-2"
     )
 
-    assert official_create == "https://api.minimax.io/v2/video_generation"
-    assert official_query == "https://api.minimax.io/v2/query/video_generation/task-1"
+    assert official_create == "https://api.minimaxi.com/v2/video_generation"
+    assert official_query == "https://api.minimaxi.com/v2/query/video_generation/task-1"
     assert aiping_create == (
         "https://aiping.cn/api/v1/multimodal/minimax/videos/video_generation"
     )
@@ -42,11 +42,11 @@ def test_minimax_video_urls_support_official_and_aiping() -> None:
 def test_music_channel_defaults() -> None:
     payload = MusicChannelCreatePayload(
         name="MiniMax Music",
-        base_url="https://api.minimax.io/",
+        base_url="https://api.minimaxi.com/",
         api_key="secret",
     )
 
-    assert payload.base_url == "https://api.minimax.io"
+    assert payload.base_url == "https://api.minimaxi.com"
     assert payload.model_name == "music-2.6"
     assert payload.default_format == "mp3"
 

@@ -164,7 +164,6 @@ async def _run_minimax_video(
         "resolution": channel.default_resolution,
         "duration": int(job.seconds),
         "ratio": _minimax_ratio(job.size),
-        "generate_audio": True,
     }
     timeout = httpx.Timeout(900.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -174,7 +173,14 @@ async def _run_minimax_video(
             json=payload,
         )
         if response.status_code != 200:
-            raise VideoProviderError(f"MiniMax 创建任务返回 HTTP {response.status_code}")
+            try:
+                provider_message = str(response.json().get("base_resp", {}).get("status_msg", ""))
+            except (ValueError, AttributeError):
+                provider_message = ""
+            suffix = f"（{provider_message[:180]}）" if provider_message else ""
+            raise VideoProviderError(
+                f"MiniMax 创建任务返回 HTTP {response.status_code}{suffix}"
+            )
         task_id = str(response.json().get("task_id", "")).strip()
         if not task_id:
             raise VideoProviderError("MiniMax 未返回 task_id")

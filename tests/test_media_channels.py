@@ -1,5 +1,6 @@
 from assistant_app.api.routes.admin import (
     MusicChannelCreatePayload,
+    SpeechChannelCreatePayload,
     VideoChannelCreatePayload,
 )
 from assistant_app.services.model_gateway import AGENT_TOOLS
@@ -51,7 +52,20 @@ def test_music_channel_defaults() -> None:
     assert payload.default_format == "mp3"
 
 
-def test_agent_exposes_video_and_music_tools() -> None:
+def test_speech_channel_defaults() -> None:
+    payload = SpeechChannelCreatePayload(
+        name="MiniMax Speech",
+        base_url="https://api.minimaxi.com/",
+        api_key="secret",
+    )
+
+    assert payload.base_url == "https://api.minimaxi.com"
+    assert payload.model_name == "speech-2.8-hd"
+    assert payload.default_voice_id == "male-qn-qingse"
+    assert payload.default_format == "mp3"
+
+
+def test_agent_exposes_video_speech_and_music_tools() -> None:
     tool_names = {tool["function"]["name"] for tool in AGENT_TOOLS}
 
-    assert {"generate_video", "generate_music"}.issubset(tool_names)
+    assert {"generate_video", "generate_speech", "generate_music"}.issubset(tool_names)

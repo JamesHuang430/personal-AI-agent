@@ -20,6 +20,7 @@ from assistant_app.db.models import (
     MusicChannel,
     Package,
     PointLedger,
+    SpeechChannel,
     User,
     VideoChannel,
 )
@@ -161,6 +162,37 @@ class MusicChannelUpdatePayload(BaseModel):
         return _validate_base_url(value) if value is not None else None
 
 
+class SpeechChannelCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    base_url: str
+    api_key: str = Field(min_length=1, max_length=2000)
+    model_name: str = Field(default="speech-2.8-hd", min_length=1, max_length=200)
+    default_voice_id: str = Field(default="male-qn-qingse", min_length=1, max_length=200)
+    qps_limit: int = Field(default=1, ge=1, le=1000)
+    default_format: Literal["mp3", "wav", "flac"] = "mp3"
+    is_active: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str) -> str:
+        return _validate_base_url(value)
+
+
+class SpeechChannelUpdatePayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    base_url: str | None = None
+    api_key: str | None = Field(default=None, min_length=1, max_length=2000)
+    model_name: str | None = Field(default=None, min_length=1, max_length=200)
+    default_voice_id: str | None = Field(default=None, min_length=1, max_length=200)
+    qps_limit: int | None = Field(default=None, ge=1, le=1000)
+    default_format: Literal["mp3", "wav", "flac"] | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str | None) -> str | None:
+        return _validate_base_url(value) if value is not None else None
+
+
 class EmailChannelPayload(BaseModel):
     name: str = Field(default="163 SMTP", min_length=1, max_length=100)
     smtp_host: str = Field(default="smtp.163.com", min_length=1, max_length=255)
@@ -252,6 +284,21 @@ def _music_channel_payload(item: MusicChannel) -> dict[str, object]:
         "name": item.name,
         "base_url": item.base_url,
         "model_name": item.model_name,
+        "qps_limit": item.qps_limit,
+        "default_format": item.default_format,
+        "is_active": item.is_active,
+        "api_key_configured": bool(item.encrypted_api_key),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _speech_channel_payload(item: SpeechChannel) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "base_url": item.base_url,
+        "model_name": item.model_name,
+        "default_voice_id": item.default_voice_id,
         "qps_limit": item.qps_limit,
         "default_format": item.default_format,
         "is_active": item.is_active,
@@ -817,6 +864,113 @@ async def disable_music_channel(
         item.is_active = False
         item.updated_at = datetime.now(UTC)
     return _music_channel_payload(item)
+
+
+@router.get("/speech-channels")
+async def speech_channels(
+    request: Request, _admin: Annotated[str, Depends(current_admin)]
+) -> list[dict[str, object]]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        rows = (
+            await session.scalars(
+                select(SpeechChannel).order_by(SpeechChannel.created_at.desc())
+            )
+        ).all()
+    return [_speech_channel_payload(item) for item in rows]
+
+
+@router.post("/speech-channels", status_code=status.HTTP_201_CREATED)
+async def create_speech_channel(
+    payload: SpeechChannelCreatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    async with runtime.sessions() as session, session.begin():
+        if payload.is_active:
+            await session.execute(update(SpeechChannel).values(is_active=False))
+        item = SpeechChannel(
+            name=payload.name.strip(),
+            base_url=payload.base_url,
+            model_name=payload.model_name.strip(),
+            default_voice_id=payload.default_voice_id.strip(),
+            encrypted_api_key=encrypt_secret(payload.api_key, settings.secret_key),
+            qps_limit=payload.qps_limit,
+            default_format=payload.default_format,
+            is_active=payload.is_active,
+        )
+        session.add(item)
+        await session.flush()
+    return _speech_channel_payload(item)
+
+
+@router.patch("/speech-channels/{channel_id}")
+async def update_speech_channel(
+    channel_id: UUID,
+    payload: SpeechChannelUpdatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    values = payload.model_dump(exclude_unset=True)
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(SpeechChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="语音配音渠道不存在")
+        if "name" in values:
+            item.name = values["name"].strip()
+        if "base_url" in values:
+            item.base_url = values["base_url"]
+        if "api_key" in values:
+            item.encrypted_api_key = encrypt_secret(values["api_key"], settings.secret_key)
+        if "model_name" in values:
+            item.model_name = values["model_name"].strip()
+        if "default_voice_id" in values:
+            item.default_voice_id = values["default_voice_id"].strip()
+        if "qps_limit" in values:
+            item.qps_limit = values["qps_limit"]
+        if "default_format" in values:
+            item.default_format = values["default_format"]
+        item.updated_at = datetime.now(UTC)
+    return _speech_channel_payload(item)
+
+
+@router.post("/speech-channels/{channel_id}/activate")
+async def activate_speech_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(SpeechChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="语音配音渠道不存在")
+        await session.execute(
+            update(SpeechChannel).where(SpeechChannel.id != channel_id).values(is_active=False)
+        )
+        item.is_active = True
+        item.updated_at = datetime.now(UTC)
+    return _speech_channel_payload(item)
+
+
+@router.post("/speech-channels/{channel_id}/disable")
+async def disable_speech_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(SpeechChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="语音配音渠道不存在")
+        item.is_active = False
+        item.updated_at = datetime.now(UTC)
+    return _speech_channel_payload(item)
 
 
 @router.get("/email-channel")

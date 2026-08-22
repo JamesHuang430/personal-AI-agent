@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>知伴 · 运营控制台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.6">
+  <link rel="stylesheet" href="/static/styles.css?v=0.7">
 </head>
 <body>
   <section id="login-view" class="login-shell">
@@ -12,7 +12,7 @@
       <div class="console-logo">知</div>
       <p class="eyebrow">OPERATIONS CONSOLE</p>
       <h1>登录运营后台</h1>
-      <p class="muted">管理用户、积分套餐与文本、视频、音乐模型渠道</p>
+      <p class="muted">管理用户、积分套餐与文本、视频、语音、音乐模型渠道</p>
       <form id="login-form">
         <label>用户名<input id="username" autocomplete="username" value="admin" required></label>
         <label>密码<input id="admin-password" type="password" autocomplete="current-password" required></label>
@@ -32,6 +32,7 @@
         <button class="nav-item" data-page="packages" type="button"><span>◇</span>积分套餐</button>
         <button class="nav-item" data-page="channels" type="button"><span>⌁</span>文本模型渠道</button>
         <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
+        <button class="nav-item" data-page="speech-channels" type="button"><span>◉</span>语音渠道</button>
         <button class="nav-item" data-page="music-channels" type="button"><span>♫</span>音乐渠道</button>
         <button class="nav-item" data-page="email-channel" type="button"><span>✉</span>邮件服务</button>
       </nav>
@@ -108,8 +109,27 @@
           <div id="video-channel-grid" class="channel-grid"></div>
         </section>
 
+        <section id="page-speech-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">SPEECH PROVIDERS</p><h1>语音配音渠道</h1><p class="muted">为短剧生成对白、旁白和固定声线配音；H3 原生音轨可用时优先保留，仅在补配音时调用</p></div></div>
+          <div class="security-banner"><span>◉</span><div><strong>MiniMax Speech / T2A</strong><p>语音同步生成并保存为可下载音频；Speech 用于配音，Music 只用于歌曲和背景音乐。</p></div></div>
+          <div id="speech-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的语音渠道</strong><p>对白与旁白配音暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
+          <form id="speech-channel-form" class="panel editor-form channel-form">
+            <input id="speech-channel-id" type="hidden">
+            <label>渠道名称<input id="speech-channel-name" value="MiniMax Speech" required></label>
+            <label>Base URL<input id="speech-channel-url" type="url" value="https://api.minimaxi.com" required></label>
+            <label>API Key<input id="speech-channel-key" type="password" placeholder="sk-..." required></label>
+            <label>模型名<input id="speech-channel-model" value="speech-2.8-hd" required></label>
+            <label>默认声线 ID<input id="speech-channel-voice" value="male-qn-qingse" required></label>
+            <label>QPS 限制<input id="speech-channel-qps" type="number" min="1" max="1000" value="1" required></label>
+            <label>默认格式<select id="speech-channel-format"><option value="mp3">MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option></select></label>
+            <label class="switch-label"><input id="speech-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
+            <div class="form-actions"><button id="speech-channel-save" class="primary" type="submit">新增语音渠道</button><button id="speech-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="speech-channel-grid" class="channel-grid"></div>
+        </section>
+
         <section id="page-music-channels" class="page hidden">
-          <div class="page-heading"><div><p class="eyebrow purple">MUSIC PROVIDERS</p><h1>音乐模型渠道</h1><p class="muted">为短剧生成主题曲、背景音乐和氛围配乐；对白与旁白将由后续 Speech 配音渠道负责</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow purple">MUSIC PROVIDERS</p><h1>音乐模型渠道</h1><p class="muted">只为短剧生成主题曲、背景音乐和氛围配乐，不用于对白或旁白配音</p></div></div>
           <div class="security-banner"><span>♫</span><div><strong>MiniMax Music 异步产物</strong><p>音乐任务完成后保存到本地生成文件卷，API Key 加密入库且不回显。</p></div></div>
           <div id="music-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的音乐渠道</strong><p>音乐生成暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
           <form id="music-channel-form" class="panel editor-form channel-form">
@@ -150,6 +170,6 @@
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.5" defer></script>
+  <script src="/static/app.js?v=0.6" defer></script>
 </body>
 </html>

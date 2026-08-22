@@ -35,6 +35,12 @@ from assistant_app.services.music_gateway import (
     music_job_payload,
     run_music_job,
 )
+from assistant_app.services.speech_gateway import (
+    SpeechChannelUnavailableError,
+    create_speech_job,
+    run_speech_job,
+    speech_job_payload,
+)
 from assistant_app.services.video_gateway import (
     VideoChannelUnavailableError,
     create_video_job,
@@ -212,6 +218,7 @@ async def chat(
         files: list[dict[str, object]] = []
         video_jobs: list[dict[str, object]] = []
         music_jobs: list[dict[str, object]] = []
+        speech_jobs: list[dict[str, object]] = []
         notices: list[str] = []
         for tool_call in result.pop("tool_calls", []):
             arguments = tool_call.get("arguments", {})
@@ -257,6 +264,23 @@ async def chat(
                 )
                 music_jobs.append(music_job_payload(job))
                 notices.append("音乐生成任务已提交，可在对话中查看进度。")
+            elif tool_call.get("name") == "generate_speech":
+                voice_id = str(arguments.get("voice_id", "")).strip() or None
+                job = await create_speech_job(
+                    request.app.state.runtime,
+                    user.id,
+                    str(arguments.get("text", payload.message)),
+                    voice_id,
+                    float(arguments.get("speed", 1.0)),
+                )
+                background_tasks.add_task(
+                    run_speech_job,
+                    request.app.state.runtime,
+                    request.app.state.settings,
+                    job.id,
+                )
+                speech_jobs.append(speech_job_payload(job))
+                notices.append("语音配音任务已提交，可在对话中查看进度。")
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))
         elif not result.get("content"):
@@ -289,6 +313,7 @@ async def chat(
         result["files"] = files
         result["video_jobs"] = video_jobs
         result["music_jobs"] = music_jobs
+        result["speech_jobs"] = speech_jobs
         return result
     except ModelRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -297,6 +322,8 @@ async def chat(
     except VideoChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except MusicChannelUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SpeechChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

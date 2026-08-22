@@ -7,6 +7,7 @@ from assistant_app.api.routes.health import router as health_router
 from assistant_app.api.routes.memory import router as memory_router
 from assistant_app.api.routes.music import router as music_router
 from assistant_app.api.routes.packages import router as packages_router
+from assistant_app.api.routes.speech import router as speech_router
 from assistant_app.api.routes.users import router as users_router
 from assistant_app.api.routes.videos import router as videos_router
 
@@ -20,3 +21,4 @@ api_router.include_router(memory_router, prefix="/memory", tags=["memory"])
 api_router.include_router(files_router, prefix="/files", tags=["files"])
 api_router.include_router(videos_router, prefix="/videos", tags=["videos"])
 api_router.include_router(music_router, prefix="/music", tags=["music"])
+api_router.include_router(speech_router, prefix="/speech", tags=["speech"])

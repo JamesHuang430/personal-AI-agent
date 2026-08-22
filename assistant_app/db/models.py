@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -177,6 +178,32 @@ class MusicChannel(Base):
     )
 
 
+class SpeechChannel(Base):
+    __tablename__ = "speech_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    default_voice_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qps_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    default_format: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="mp3", server_default=text("'mp3'")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class EmailChannel(Base):
     __tablename__ = "email_channels"
 
@@ -259,6 +286,32 @@ class MusicJob(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
+    audio_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SpeechJob(Base):
+    __tablename__ = "speech_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("speech_channels.id", ondelete="RESTRICT"), index=True
+    )
+    speech_text: Mapped[str] = mapped_column(Text, nullable=False)
+    voice_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
     audio_format: Mapped[str] = mapped_column(String(16), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     storage_path: Mapped[str | None] = mapped_column(String(500))

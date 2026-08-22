@@ -517,7 +517,8 @@ function renderArtifacts(message, result) {
   const files = result.files || [];
   const jobs = result.video_jobs || [];
   const musicJobs = result.music_jobs || [];
-  if (!files.length && !jobs.length && !musicJobs.length) return;
+  const speechJobs = result.speech_jobs || [];
+  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length) return;
   const list = document.createElement('div');
   list.className = 'artifact-list';
   for (const file of files) {
@@ -542,7 +543,38 @@ function renderArtifacts(message, result) {
     list.appendChild(card);
     window.setTimeout(() => pollMusicJob(job.id, card), 5000);
   }
+  for (const job of speechJobs) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.innerHTML = `<div><strong>◉ 语音配音任务</strong><small>排队中 · ${escapeHtml(job.voice_id)}</small></div><a href="#">刷新状态</a>`;
+    card.querySelector('a').addEventListener('click', (event) => { event.preventDefault(); pollSpeechJob(job.id, card); });
+    list.appendChild(card);
+    window.setTimeout(() => pollSpeechJob(job.id, card), 3000);
+  }
   message.querySelector('.message-bubble').appendChild(list);
+}
+
+async function pollSpeechJob(jobId, card) {
+  try {
+    const job = await api(`/speech/${jobId}`);
+    const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
+    const duration = job.duration_ms ? ` · ${(job.duration_ms / 1000).toFixed(1)} 秒` : '';
+    card.querySelector('small').textContent = `${statusText} · ${job.voice_id}${duration}`;
+    if (job.status === 'completed') {
+      card.querySelector('a').textContent = '下载语音';
+      card.querySelector('a').href = job.download_url;
+      return;
+    }
+    if (job.status === 'failed') {
+      card.classList.add('failed');
+      card.querySelector('small').textContent = job.error_message || '语音渠道返回失败';
+      card.querySelector('a').remove();
+      return;
+    }
+    window.setTimeout(() => pollSpeechJob(jobId, card), 3000);
+  } catch (error) {
+    card.querySelector('small').textContent = error.message;
+  }
 }
 
 async function pollMusicJob(jobId, card) {

@@ -66,6 +66,34 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_speech",
+            "description": (
+                "用户明确要求旁白、对白配音、固定声线或为视频补配音时生成语音。"
+                "普通 H3 视频优先保留原生音轨，不要自动重复配音。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "需要朗读的对白或旁白正文"},
+                    "voice_id": {
+                        "type": "string",
+                        "description": "可选 MiniMax voice_id；省略时使用运营后台默认声线",
+                    },
+                    "speed": {
+                        "type": "number",
+                        "minimum": 0.5,
+                        "maximum": 2.0,
+                        "description": "语速，默认 1.0",
+                    },
+                },
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "generate_music",
             "description": "用户明确要求生成主题曲、配乐、背景音乐或氛围音乐时提交任务。",
             "parameters": {
@@ -143,7 +171,9 @@ async def chat_completion(
                 "不知道的信息要明确说明，不要虚构机票、火车票或实时数据。"
                 "用户明确要求生成或导出文件时调用 create_file；明确要求生成视频时调用"
                 " generate_video；明确要求主题曲、配乐或背景音乐时调用 generate_music。"
-                "不要声称已经生成文件、视频或音乐，必须实际调用对应工具。"
+                "明确要求旁白、对白、固定声线或补配音时调用 generate_speech；普通 H3 视频"
+                "优先保留原生音轨，不要重复配音。不要声称已经生成文件、视频、语音或音乐，"
+                "必须实际调用对应工具。"
             ),
         },
     ]

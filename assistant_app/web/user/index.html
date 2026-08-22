@@ -328,7 +328,7 @@
       <li><span>01</span><div><strong>新建项目并填写制作设定</strong><p>从一句故事创意开始，确认目标时长、横竖屏、风格、发布平台和预算。当前“雨停之前”是流程演示项目，不是已经保存的真实成片项目。</p></div></li>
       <li><span>02</span><div><strong>逐个点击八道门禁审阅</strong><p>点击上方任一门禁可查看负责 Agent 的判断摘要、证据和交付物；总导演只统筹，不替代各专业 Agent 验收。</p></div></li>
       <li><span>03</span><div><strong>修改或采纳并流转</strong><p>不满意就点“提出修改”；确认后点“采纳并流转”，本关才会通过并进入下一关。分镜没有锁定前，不应开始批量生成镜头。</p></div></li>
-      <li><span>04</span><div><strong>到“镜头生成”门禁调用视频模型</strong><p>必须先由运营后台启用可用的视频渠道。MiniMax H3 会原生生成带声音的视频；只有固定声纹、独立旁白或可替换配乐时，声音 Agent 才额外调用音频模型。</p></div></li>
+      <li><span>04</span><div><strong>到“镜头生成”门禁调用视频模型</strong><p>必须先由运营后台启用可用的视频渠道。MiniMax H3 会原生生成带声音的视频；只有固定声纹、独立旁白或补配音时，声音 Agent 才额外调用 Speech 语音渠道。Music 只用于主题曲和背景音乐。</p></div></li>
       <li><span>05</span><div><strong>声音质检、剪辑合成与终审</strong><p>声音 Agent 检查对白、口型和声场；剪辑 Agent 组接镜头；监制 Agent 完成连续性、版权和平台合规检查后，才形成可下载的最终视频。</p></div></li>
     </ol>
 
@@ -345,6 +345,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.4" defer></script>
+  <script src="/static/app.js?v=0.5" defer></script>
 </body>
 </html>

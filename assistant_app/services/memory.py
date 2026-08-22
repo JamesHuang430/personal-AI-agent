@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
@@ -129,14 +131,61 @@ JSON 格式：
     return extracted
 
 
-async def _embed_texts(
-    client: AsyncOpenAI,
+@lru_cache(maxsize=4)
+def _local_embedding_model(
     model_name: str,
+    cache_dir: str,
+    threads: int,
+    local_files_only: bool,
+):
+    from fastembed import TextEmbedding
+
+    return TextEmbedding(
+        model_name=model_name,
+        cache_dir=cache_dir,
+        threads=max(1, min(threads, 8)),
+        local_files_only=local_files_only,
+    )
+
+
+def _embed_texts_locally(
+    settings: Settings,
     texts: list[str],
+    *,
+    query: bool,
+) -> list[list[float]]:
+    model = _local_embedding_model(
+        settings.memory_embedding_model,
+        settings.memory_embedding_cache,
+        settings.memory_embedding_threads,
+        settings.memory_embedding_local_files_only,
+    )
+    values = model.query_embed(texts) if query else model.passage_embed(texts)
+    return [value.tolist() for value in values]
+
+
+async def _embed_texts(
+    client: AsyncOpenAI | None,
+    settings: Settings,
+    texts: list[str],
+    *,
+    query: bool = False,
 ) -> list[list[float]]:
     if not texts:
         return []
-    response = await client.embeddings.create(model=model_name, input=texts)
+    if settings.memory_embedding_provider == "local":
+        return await asyncio.to_thread(
+            _embed_texts_locally,
+            settings,
+            texts,
+            query=query,
+        )
+    if client is None:
+        raise RuntimeError("Embedding channel client is unavailable")
+    response = await client.embeddings.create(
+        model=settings.memory_embedding_model,
+        input=texts,
+    )
     ordered = sorted(response.data, key=lambda item: item.index)
     return [list(item.embedding) for item in ordered]
 
@@ -160,11 +209,17 @@ async def learn_from_exchange(
             extracted = await _extract_exchange(client, model_name, user_text, assistant_text)
             embeddings: list[list[float]] = []
             if settings.memory_embedding_model and extracted.memories:
-                embeddings = await _embed_texts(
-                    client,
-                    settings.memory_embedding_model,
-                    [item.content for item in extracted.memories],
-                )
+                try:
+                    embeddings = await _embed_texts(
+                        client,
+                        settings,
+                        [item.content for item in extracted.memories],
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "memory_embedding_failed",
+                        extra={"error_type": type(exc).__name__},
+                    )
 
         memory_records: list[MemoryItem] = []
         async with runtime.sessions() as session, session.begin():
@@ -272,11 +327,14 @@ async def _retrieve_vector_memories(
 ) -> list[dict[str, object]]:
     if not settings.memory_embedding_model:
         return []
-    _channel, client = await _active_channel_and_client(
-        runtime, settings, request_timeout=30
-    )
-    async with client:
-        vectors = await _embed_texts(client, settings.memory_embedding_model, [query])
+    if settings.memory_embedding_provider == "local":
+        vectors = await _embed_texts(None, settings, [query], query=True)
+    else:
+        _channel, client = await _active_channel_and_client(
+            runtime, settings, request_timeout=30
+        )
+        async with client:
+            vectors = await _embed_texts(client, settings, [query], query=True)
     if not vectors:
         return []
     vector = vectors[0]

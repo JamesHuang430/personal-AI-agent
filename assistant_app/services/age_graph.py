@@ -123,7 +123,9 @@ async def upsert_memory_graph(
                 ),
             ]
         )
-    statements.append(f"RETURN {aliases[clean_entities[0].key]}")
+    # Returning a vertex makes AGE try to coerce the internal vertex agtype
+    # through asyncpg. Return a scalar instead; callers only need completion.
+    statements.append("RETURN 1")
     cypher = "\n".join(statements)
     sql = text(
         f"""
@@ -147,29 +149,41 @@ async def load_memory_graph(
     user_literal = _cypher_string(str(user_id))
     node_sql = text(
         f"""
-        SELECT node::text AS node
+        SELECT node_id::text AS node_id, properties::text AS properties
         FROM ag_catalog.cypher('{GRAPH_NAME}', $cypher$
             MATCH (node:Entity)
             WHERE node.user_id = {user_literal}
-            RETURN node
+            RETURN id(node), properties(node)
             LIMIT {safe_limit}
-        $cypher$) AS (node ag_catalog.agtype)
+        $cypher$) AS (node_id ag_catalog.agtype, properties ag_catalog.agtype)
         """
     )
     edge_sql = text(
         f"""
-        SELECT source::text AS source, edge::text AS edge, target::text AS target
+        SELECT
+            source_id::text AS source_id,
+            source_properties::text AS source_properties,
+            edge_id::text AS edge_id,
+            edge_properties::text AS edge_properties,
+            target_id::text AS target_id,
+            target_properties::text AS target_properties
         FROM ag_catalog.cypher('{GRAPH_NAME}', $cypher$
             MATCH (source:Entity)-[edge:RELATED]->(target:Entity)
             WHERE source.user_id = {user_literal}
               AND target.user_id = {user_literal}
               AND edge.user_id = {user_literal}
-            RETURN source, edge, target
+            RETURN
+                id(source), properties(source),
+                id(edge), properties(edge),
+                id(target), properties(target)
             LIMIT {safe_limit}
         $cypher$) AS (
-            source ag_catalog.agtype,
-            edge ag_catalog.agtype,
-            target ag_catalog.agtype
+            source_id ag_catalog.agtype,
+            source_properties ag_catalog.agtype,
+            edge_id ag_catalog.agtype,
+            edge_properties ag_catalog.agtype,
+            target_id ag_catalog.agtype,
+            target_properties ag_catalog.agtype
         )
         """
     )
@@ -182,13 +196,10 @@ async def load_memory_graph(
     nodes: dict[str, dict[str, object]] = {}
     edges: list[dict[str, object]] = []
 
-    def add_node(raw: object) -> str | None:
-        parsed = _agtype_object(raw)
-        if not parsed:
-            return None
-        internal_id = str(parsed.get("id", ""))
-        properties = parsed.get("properties")
-        if not internal_id or not isinstance(properties, dict):
+    def add_node(raw_id: object, raw_properties: object) -> str | None:
+        internal_id = str(raw_id).strip()
+        properties = _agtype_object(raw_properties)
+        if not internal_id or not properties:
             return None
         nodes[internal_id] = {
             "id": internal_id,
@@ -199,18 +210,16 @@ async def load_memory_graph(
         return internal_id
 
     for row in node_rows:
-        add_node(row["node"])
+        add_node(row["node_id"], row["properties"])
     for row in edge_rows:
-        source_id = add_node(row["source"])
-        target_id = add_node(row["target"])
-        edge = _agtype_object(row["edge"])
-        if not source_id or not target_id or not edge:
+        source_id = add_node(row["source_id"], row["source_properties"])
+        target_id = add_node(row["target_id"], row["target_properties"])
+        properties = _agtype_object(row["edge_properties"])
+        if not source_id or not target_id or not properties:
             continue
-        properties = edge.get("properties")
-        properties = properties if isinstance(properties, dict) else {}
         edges.append(
             {
-                "id": str(edge.get("id", f"{source_id}-{target_id}")),
+                "id": str(row["edge_id"]),
                 "source": source_id,
                 "target": target_id,
                 "label": str(properties.get("predicate", "RELATED_TO")),

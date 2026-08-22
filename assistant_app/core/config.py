@@ -33,7 +33,11 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 604800
     public_url: str = "http://127.0.0.1:18000"
     memory_enabled: bool = True
-    memory_embedding_model: str = ""
+    memory_embedding_provider: Literal["local", "channel"] = "local"
+    memory_embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    memory_embedding_cache: str = ".cache/fastembed"
+    memory_embedding_local_files_only: bool = False
+    memory_embedding_threads: int = 2
     memory_retrieval_limit: int = 12
     memory_graph_limit: int = 200
 

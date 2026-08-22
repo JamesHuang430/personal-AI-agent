@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.16,<2",
     "asyncpg>=0.30,<1",
     "cryptography>=45,<47",
+    "fastembed>=0.8,<1",
     "fastapi>=0.116,<1",
     "openai>=3.2,<4",
     "pgvector>=0.4,<1",

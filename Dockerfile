@@ -26,6 +26,16 @@ COPY migrations ./migrations
 RUN chmod -R a+rX /app \
     && python -m pip install .
 
+RUN mkdir -p /opt/fastembed \
+    && python -c "import os,tarfile,urllib.request; archive='/tmp/bge-small-zh-v1.5.tar.gz'; urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data'); os.unlink(archive)" \
+    && python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/opt/fastembed', local_files_only=True)"
+
+ENV ASSISTANT_MEMORY_EMBEDDING_PROVIDER=local \
+    ASSISTANT_MEMORY_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \
+    ASSISTANT_MEMORY_EMBEDDING_CACHE=/opt/fastembed \
+    ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY=true \
+    ASSISTANT_MEMORY_EMBEDDING_THREADS=2
+
 USER assistant
 EXPOSE 8000 19000
 

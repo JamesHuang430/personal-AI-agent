@@ -62,8 +62,10 @@
 
 pgvector 与 Apache AGE 已包含在 PostgreSQL 服务中，无需单独启动图数据库。数据库和 Redis 默认不映射宿主机端口；MinIO 的开发端口只绑定在 `127.0.0.1`。API 默认使用宿主机 `18000`，避免与远端现有 `deploy-api-1` 的 `8000` 冲突。
 
-若当前大模型渠道提供 Embeddings API，在 `.env` 中设置
-`ASSISTANT_MEMORY_EMBEDDING_MODEL` 即可启用向量召回；留空时会话、长期记忆和图谱仍会正常保存，并使用关键词回退检索。
+向量召回默认使用镜像内置的免费中文模型 `BAAI/bge-small-zh-v1.5`，无需大模型
+渠道额外提供 Embeddings API。若要改用渠道的向量模型，可将
+`ASSISTANT_MEMORY_EMBEDDING_PROVIDER` 设为 `channel`，并配置对应模型名；向量服务
+暂时不可用时，会话、长期记忆和图谱仍会正常保存，并自动使用关键词回退检索。
 
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
 生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。

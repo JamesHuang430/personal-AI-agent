@@ -10,8 +10,11 @@ let userCaptchaId = '';
 let resetCaptchaId = '';
 let registrationCodeSent = false;
 let modelsLoading = false;
+let sessionNeedsOrganization = false;
+let organizingSession = false;
 const customModelValue = '__custom__';
 const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token');
+const initialWelcomeMarkup = $('#messages').innerHTML;
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/v1${path}`, {
@@ -87,6 +90,7 @@ function showApp(user) {
   appView.classList.remove('hidden');
   updateUser(user);
   loadModels();
+  loadAgentRouting();
   loadConversations();
 }
 
@@ -104,7 +108,10 @@ async function loadConversations() {
       button.type = 'button';
       button.className = `history-item ${item.id === currentConversationId ? 'active' : ''}`;
       button.innerHTML = `<span>✦</span><span>${escapeHtml(item.title)}</span>`;
-      button.addEventListener('click', () => openConversation(item.id));
+      button.addEventListener('click', async () => {
+        if (sessionNeedsOrganization) await organizeCurrentConversation();
+        await openConversation(item.id);
+      });
       list.appendChild(button);
     }
   } catch (error) {
@@ -124,6 +131,9 @@ async function openConversation(conversationId) {
         : '';
       addMessage(item.role, item.content, meta);
     }
+    sessionNeedsOrganization = false;
+    $('#organize-session').disabled = false;
+    $('#session-memory-status').textContent = '历史会话已载入；可以继续对话，或再次整理到个人知识库';
     await loadConversations();
   } catch (error) {
     notify(error.message);
@@ -175,6 +185,25 @@ async function loadModels() {
     custom.classList.toggle('hidden', select.value !== customModelValue);
     $('#send-btn').disabled = false;
     refresh.disabled = false;
+  }
+}
+
+async function loadAgentRouting() {
+  try {
+    const routing = await api('/chat/agent-model-routing');
+    for (const assignment of routing.assignments || []) {
+      const target = document.querySelector(`[data-agent-model="${assignment.agent}"]`);
+      if (!target) continue;
+      target.textContent = assignment.model || '暂无可用模型';
+      target.title = `${assignment.reason} · ${assignment.status === 'matched' ? '能力匹配' : '降级匹配'}`;
+      target.dataset.modelStatus = assignment.status;
+    }
+  } catch (error) {
+    document.querySelectorAll('[data-agent-model]').forEach((target) => {
+      target.textContent = '等待可用模型';
+      target.title = error.message;
+      target.dataset.modelStatus = 'unavailable';
+    });
   }
 }
 
@@ -429,7 +458,14 @@ async function showMemory() {
   $('#memory-graph').innerHTML = '<p class="muted">正在加载图谱…</p>';
   $('#memory-items').innerHTML = '<p class="muted">正在加载记忆…</p>';
   try {
-    const [graph, memories] = await Promise.all([api('/memory/graph'), api('/memory/items')]);
+    const [graph, memories, stats] = await Promise.all([
+      api('/memory/graph'),
+      api('/memory/items'),
+      api('/memory/stats'),
+    ]);
+    $('#vector-memory-count').textContent = stats.embeddings.toLocaleString('zh-CN');
+    $('#graph-node-count').textContent = stats.graph_nodes.toLocaleString('zh-CN');
+    $('#graph-edge-count').textContent = stats.graph_edges.toLocaleString('zh-CN');
     renderMemoryGraph(graph);
     $('#memory-items').innerHTML = memories.map((item) => `
       <article class="memory-item" data-memory-id="${item.id}">
@@ -547,6 +583,13 @@ async function sendMessage(text) {
     renderArtifacts(responseMessage, result);
     conversation.push({ role: 'assistant', content: result.content });
     currentConversationId = result.conversation_id;
+    sessionNeedsOrganization = true;
+    $('#organize-session').disabled = false;
+    const usedMemories = Number(result.memory?.items_used || 0);
+    const usedRelations = Number(result.memory?.graph_edges_used || 0);
+    $('#session-memory-status').textContent = usedMemories || usedRelations
+      ? `本轮调用了 ${usedMemories} 条记忆、${usedRelations} 条关系；结束后将归纳新素材`
+      : '本轮内容已记录；结束会话后将自动提炼并同步到双重知识库';
     loadConversations();
   } catch (error) {
     pending.remove();
@@ -571,14 +614,191 @@ $('#chat-input').addEventListener('input', (event) => {
   event.target.style.height = 'auto';
   event.target.style.height = `${Math.min(event.target.scrollHeight, 150)}px`;
 });
-document.querySelectorAll('[data-prompt]').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
-$('#new-chat').addEventListener('click', () => {
+function bindPromptButtons() {
+  document.querySelectorAll('[data-prompt]').forEach((button) => {
+    button.addEventListener('click', () => sendMessage(button.dataset.prompt));
+  });
+}
+
+async function organizeCurrentConversation(force = false) {
+  if (!currentConversationId || organizingSession || (!sessionNeedsOrganization && !force)) return null;
+  organizingSession = true;
+  const button = $('#organize-session');
+  button.disabled = true;
+  button.textContent = '正在整理…';
+  $('#session-memory-status').textContent = '正在提炼素材、想法、目标和实体关系，并写入个人知识库…';
+  try {
+    const result = await api(`/chat/conversations/${currentConversationId}/organize`, {
+      method: 'POST',
+    });
+    sessionNeedsOrganization = result.status !== 'completed' && result.status !== 'disabled';
+    if (result.status === 'completed') {
+      $('#session-memory-status').textContent = `整理完成：识别 ${result.memories} 条记忆、${result.entities} 个实体、${result.relations} 条关系`;
+    } else {
+      $('#session-memory-status').textContent = result.message;
+    }
+    notify(result.message);
+    return result;
+  } catch (error) {
+    sessionNeedsOrganization = true;
+    $('#session-memory-status').textContent = '整理暂未完成，原始对话已保存，可稍后重试';
+    notify(error.message);
+    return null;
+  } finally {
+    organizingSession = false;
+    button.disabled = !currentConversationId;
+    button.textContent = '结束并整理';
+  }
+}
+
+function resetConversationView() {
   conversation = [];
   currentConversationId = null;
-  $('#messages').innerHTML = '<div class="welcome-block"><div class="assistant-logo">知</div><h2>新的对话</h2><p>随时开始，我在这里。</p></div>';
+  sessionNeedsOrganization = false;
+  $('#messages').innerHTML = initialWelcomeMarkup;
+  $('#organize-session').disabled = true;
+  $('#session-memory-status').textContent = '本次会话结束后，将自动提炼素材、想法、目标与关系';
+  bindPromptButtons();
   loadConversations();
+}
+
+bindPromptButtons();
+$('#organize-session').addEventListener('click', () => organizeCurrentConversation(true));
+$('#new-chat').addEventListener('click', async () => {
+  if (sessionNeedsOrganization) await organizeCurrentConversation();
+  resetConversationView();
 });
 $('#mobile-menu').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
+
+const productionStages = {
+  concept: {
+    avatar: '策', role: '策划 AGENT · 已完成', status: '总导演已通过',
+    title: '核心钩子成立：一次错过，改变两个人的十年',
+    summary: '目标受众偏好高密度情绪与明确悬念。用“同站台却没见面”的视觉事件开场，能在前 6 秒建立冲突，并自然引出那封未寄出的信。',
+    evidence: ['✓ 前 6 秒出现人物、关系与缺口', '✓ 单集目标可在 100 秒内闭环', '✓ 结尾保留下一集追看问题'],
+    deliverable: '项目圣经 · 核心命题与受众假设 v2', meta: '题材：都市情感 · 核心情绪：遗憾 · 单集钩子：错身',
+  },
+  script: {
+    avatar: '文', role: '编剧 AGENT · 已完成', status: '总导演已通过',
+    title: '第 3 集的情绪峰值已落在第 78 秒',
+    summary: '本集按“误以为等到—确认错过—发现信件”三段推进。删去解释性旁白后，让动作和道具承担信息，能让竖屏观看中的情绪转折更清晰。',
+    evidence: ['✓ 每 15–20 秒出现一次新信息', '✓ 台词长度适配口型与节奏', '✓ 人物行为符合前两集动机'],
+    deliverable: '第 03 集拍摄剧本 v5', meta: '8 场 · 24 镜 · 预计 1′42″ · 台词 312 字',
+  },
+  assets: {
+    avatar: '角', role: '美术 AGENT · 已完成', status: '资产已锁定',
+    title: '角色、场景与视觉规则已建立统一锚点',
+    summary: '两位主角均已生成正面、侧面、背面和表情参考；雨夜公交站的色温、雨量与广告灯箱位置写入资产锁，后续镜头不得重新想象这些稳定特征。',
+    evidence: ['✓ 每位角色至少 3 个角度参考', '✓ 服装与关键道具具有唯一编号', '✓ 场景光位与色板已锁定'],
+    deliverable: '角色与场景资产包 v4', meta: '2 位角色 · 3 个场景 · 7 件关键道具 · 18 张参考',
+  },
+  storyboard: {
+    avatar: '镜', role: '分镜导演 AGENT · 正在工作', status: '等待你确认',
+    title: '第 12 镜：反打会削弱“错过”的力度',
+    summary: '如果现在切到林夏的正面表情，观众会提前获得情绪答案。保留车窗倒影，让她的反应晚 1.5 秒出现，能把“差一点看见”的遗憾留给观众。',
+    evidence: ['✓ 与第 11 镜的视线方向连续', '✓ 发型、耳饰、雨量与资产库一致', '! 镜头时长建议从 4.0s 调整为 5.5s'],
+    deliverable: 'SHOT 12 · 车窗倒影构图 v3', meta: '景别：近景 · 焦段：85mm · 运镜：缓慢侧移',
+  },
+  video: {
+    avatar: '帧', role: '摄影 AGENT · 等待上游', status: '等待分镜锁定',
+    title: '镜头生成策略已准备，先做关键帧再驱动视频',
+    summary: '为控制人物漂移，将先用锁定资产生成每镜起止关键帧，再按 3–6 秒的镜头颗粒度生成动态素材。复杂双人表演会拆成单人反应镜头组合。',
+    evidence: ['✓ 人物与场景参考将自动附加', '✓ 每镜生成参数可追溯', '! 双人同框镜头需要优先抽检'],
+    deliverable: '24 镜生成任务清单', meta: '关键帧 41 张 · 视频任务 24 个 · 预计 3 轮候选',
+  },
+  audio: {
+    avatar: '声', role: '声音 AGENT · 等待上游', status: '等待画面时长',
+    title: '对白、环境声与音乐将围绕情绪节拍分层',
+    summary: '先锁定角色声纹与表演意图，再做对白和口型；雨声、公交制动和信纸摩擦作为叙事声音，音乐只在人物确认错过后进入。',
+    evidence: ['✓ 角色声纹与年龄匹配', '✓ 对白情绪标注已完成', '! 配乐进入点依赖最终镜头时长'],
+    deliverable: '声音设计表 v2', meta: '对白 18 条 · 环境声 6 轨 · 音乐主题 1 个',
+  },
+  edit: {
+    avatar: '剪', role: '剪辑 AGENT · 等待上游', status: '等待可用素材',
+    title: '粗剪将先验证叙事，再进入精剪与包装',
+    summary: '先按分镜顺序建立无特效粗剪，检查信息是否可懂、节奏是否拖沓；通过后再处理口型、转场、字幕、调色与混音，避免对无效镜头过早精修。',
+    evidence: ['✓ 粗剪与精剪验收分离', '✓ 竖屏字幕安全区已设定', '✓ 声画同步将逐镜检查'],
+    deliverable: '时间线模板 · Episode 03', meta: '9:16 · 25fps · 1080×1920 · 峰值响度 -1 dBTP',
+  },
+  quality: {
+    avatar: '审', role: '监制 AGENT · 等待上游', status: '等待终版',
+    title: '终审将覆盖叙事、连续性、技术与合规四道门',
+    summary: '任何角色漂移、穿帮、闪烁、口型错位或关键情节不清都会退回对应 Agent，而不是在最终导出阶段用模糊处理掩盖。发布版还需完成版权、肖像与平台规范检查。',
+    evidence: ['✓ 逐镜连续性检查表已创建', '✓ 技术与内容合规独立验收', '✓ 问题可回溯到责任 Agent'],
+    deliverable: '终审与发布清单', meta: '叙事 6 项 · 连续性 9 项 · 技术 8 项 · 合规 7 项',
+  },
+};
+
+function switchWorkspace(mode) {
+  const isStudio = mode === 'studio';
+  $('#chat-workspace').classList.toggle('hidden', isStudio);
+  $('#studio-workspace').classList.toggle('hidden', !isStudio);
+  $('#chat-sidebar-context').classList.toggle('hidden', isStudio);
+  $('#studio-sidebar-context').classList.toggle('hidden', !isStudio);
+  $('#memory-btn').classList.toggle('hidden', isStudio);
+  $('#workspace-title').textContent = isStudio ? 'AI 导演工作室' : '知识对话';
+  $('#workspace-subtitle').textContent = isStudio ? '一人导演，一组 Agent 把关' : '边问边沉淀你的个人知识库';
+  document.querySelectorAll('[data-workspace]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.workspace === mode);
+  });
+  $('.sidebar').classList.remove('open');
+  window.localStorage.setItem('assistant-workspace', mode);
+}
+
+function renderProductionStage(key) {
+  const stage = productionStages[key];
+  if (!stage) return;
+  $('#stage-avatar').textContent = stage.avatar;
+  $('#stage-role').textContent = stage.role;
+  $('#stage-status').textContent = stage.status;
+  $('#stage-title').textContent = stage.title;
+  $('#stage-summary').textContent = stage.summary;
+  $('#stage-evidence').replaceChildren(...stage.evidence.map((item) => {
+    const span = document.createElement('span');
+    const icon = document.createElement('i');
+    icon.textContent = item.slice(0, 1);
+    span.append(icon, document.createTextNode(` ${item.slice(2)}`));
+    return span;
+  }));
+  $('#stage-deliverable').querySelector('strong').textContent = stage.deliverable;
+  $('#stage-deliverable').querySelector('small').textContent = stage.meta;
+  document.querySelectorAll('[data-stage]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.stage === key));
+  });
+}
+
+document.querySelectorAll('[data-workspace]').forEach((button) => {
+  button.addEventListener('click', () => switchWorkspace(button.dataset.workspace));
+});
+document.querySelectorAll('[data-stage]').forEach((button) => {
+  button.addEventListener('click', () => renderProductionStage(button.dataset.stage));
+});
+document.querySelectorAll('.shot-card').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.shot-card').forEach((item) => item.classList.remove('selected'));
+    button.classList.add('selected');
+  });
+});
+$('#continue-production').addEventListener('click', () => {
+  renderProductionStage('storyboard');
+  $('#stage-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+$('#approve-stage').addEventListener('click', () => {
+  const current = document.querySelector('[data-stage][aria-pressed="true"]');
+  if (!current) return;
+  current.classList.add('done');
+  current.querySelector('em').textContent = '已通过';
+  $('#stage-status').textContent = '已采纳，正在流转';
+  notify('总导演已接收，本环节交付物已进入下一关');
+});
+$('#request-revision').addEventListener('click', () => notify('已创建修改意见，负责 Agent 将保留当前版本并生成新方案'));
+$('#view-deliverable').addEventListener('click', () => $('#shot-heading').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+$('#new-project').addEventListener('click', () => notify('新项目向导：将从一句故事创意开始'));
+$('#project-settings').addEventListener('click', () => notify('制作设定包含画幅、时长、风格、预算与发布平台'));
+$('#show-all-shots').addEventListener('click', () => notify('全片共 24 镜，当前展示场次 07 的关键镜头'));
+
+const initialWorkspace = window.localStorage.getItem('assistant-workspace');
+if (initialWorkspace === 'studio') switchWorkspace('studio');
 
 if (resetToken) {
   $('#standard-auth').classList.add('hidden');

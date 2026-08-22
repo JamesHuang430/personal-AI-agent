@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import User
+from assistant_app.services.agent_model_router import route_agent_models
 from assistant_app.services.conversations import (
     ConversationNotFoundError,
     get_conversation_messages,
@@ -17,7 +18,11 @@ from assistant_app.services.conversations import (
     record_assistant_message,
 )
 from assistant_app.services.generated_files import create_generated_file, file_payload
-from assistant_app.services.memory import learn_from_exchange, retrieve_memory_context
+from assistant_app.services.memory import (
+    learn_from_exchange,
+    organize_conversation_session,
+    retrieve_memory_context,
+)
 from assistant_app.services.model_gateway import (
     ModelChannelUnavailableError,
     ModelRateLimitError,
@@ -80,6 +85,36 @@ async def available_models(
         ) from exc
 
 
+@router.get("/agent-model-routing")
+async def agent_model_routing(
+    request: Request,
+    _user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    """Match every production agent to the best currently available model."""
+
+    try:
+        channel_name, model_names = await list_available_models(
+            request.app.state.runtime,
+            request.app.state.settings,
+        )
+        return {
+            "channel": channel_name,
+            "available_models": model_names,
+            "assignments": route_agent_models(model_names),
+        }
+    except ModelChannelUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="大模型渠道密钥无法解密") from exc
+    except (APIConnectionError, APITimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="无法匹配 Agent 模型") from exc
+    except APIStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"匹配 Agent 模型失败（HTTP {exc.status_code}）",
+        ) from exc
+
+
 @router.get("/conversations")
 async def conversations(
     request: Request,
@@ -102,6 +137,41 @@ async def conversation_messages(
         )
     except ConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/organize")
+async def organize_conversation(
+    conversation_id: UUID,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    try:
+        await get_conversation_messages(
+            request.app.state.runtime,
+            user.id,
+            conversation_id,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    result = await organize_conversation_session(
+        request.app.state.runtime,
+        request.app.state.settings,
+        user.id,
+        conversation_id,
+    )
+    messages = {
+        "completed": "本次会话已整理并同步到个人知识库",
+        "disabled": "当前未启用长期记忆，未保存本次会话",
+        "failed": "本次会话整理失败，原始对话仍已安全保存",
+    }
+    return {
+        "status": result.status,
+        "message": messages[result.status],
+        "memories": result.memory_count,
+        "entities": result.entity_count,
+        "relations": result.relation_count,
+    }
 
 
 @router.post("")

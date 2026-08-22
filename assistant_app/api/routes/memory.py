@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import User
 from assistant_app.services.age_graph import load_memory_graph
-from assistant_app.services.memory import forget_memory_item, list_memory_items
+from assistant_app.services.memory import (
+    forget_memory_item,
+    list_memory_items,
+    memory_store_stats,
+)
 
 router = APIRouter()
 
@@ -41,4 +45,16 @@ async def memory_graph(
         request.app.state.runtime,
         user.id,
         request.app.state.settings.memory_graph_limit,
+    )
+
+
+@router.get("/stats")
+async def memory_stats(
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, int]:
+    return await memory_store_stats(
+        request.app.state.runtime,
+        request.app.state.settings,
+        user.id,
     )

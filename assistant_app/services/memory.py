@@ -13,11 +13,16 @@ from uuid import UUID
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, desc, select, text, update
+from sqlalchemy import delete, desc, func, select, text, update
 
 from assistant_app.core.config import Settings
 from assistant_app.core.encryption import decrypt_secret
-from assistant_app.db.models import MemoryEmbedding, MemoryItem, ModelChannel
+from assistant_app.db.models import (
+    ConversationMessage,
+    MemoryEmbedding,
+    MemoryItem,
+    ModelChannel,
+)
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.age_graph import (
     GraphEntity,
@@ -66,6 +71,14 @@ class RetrievedMemoryContext:
     text: str
     memory_count: int
     graph_edge_count: int
+
+
+@dataclass(frozen=True)
+class MemoryLearningResult:
+    status: Literal["completed", "disabled", "failed"]
+    memory_count: int = 0
+    entity_count: int = 0
+    relation_count: int = 0
 
 
 async def _active_channel_and_client(
@@ -198,11 +211,11 @@ async def learn_from_exchange(
     user_text: str,
     assistant_text: str,
     model_name: str,
-) -> None:
+) -> MemoryLearningResult:
     """Best-effort background learning; failures must never break a completed chat."""
 
     if not settings.memory_enabled:
-        return
+        return MemoryLearningResult(status="disabled")
     try:
         _channel, client = await _active_channel_and_client(runtime, settings)
         async with client:
@@ -299,8 +312,75 @@ async def learn_from_exchange(
                 for item in extracted.relations
             ],
         )
+        return MemoryLearningResult(
+            status="completed",
+            memory_count=len(extracted.memories),
+            entity_count=len(extracted.entities),
+            relation_count=len(extracted.relations),
+        )
     except Exception as exc:  # background learning is deliberately best-effort
         logger.warning("memory_learning_failed", extra={"error_type": type(exc).__name__})
+        return MemoryLearningResult(status="failed")
+
+
+async def organize_conversation_session(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    user_id: UUID,
+    conversation_id: UUID,
+) -> MemoryLearningResult:
+    """Consolidate a finished conversation into one coherent memory extraction pass."""
+
+    async with runtime.sessions() as session:
+        messages = (
+            await session.scalars(
+                select(ConversationMessage)
+                .where(
+                    ConversationMessage.conversation_id == conversation_id,
+                    ConversationMessage.user_id == user_id,
+                )
+                .order_by(ConversationMessage.created_at)
+            )
+        ).all()
+
+    user_messages = [item for item in messages if item.role == "user"]
+    assistant_messages = [item for item in messages if item.role == "assistant"]
+    if not user_messages:
+        return MemoryLearningResult(status="completed")
+
+    recent_user_messages = user_messages[-10:]
+    recent_assistant_messages = assistant_messages[-10:]
+    user_transcript = "\n\n".join(
+        f"第 {index} 轮用户：{item.content}"
+        for index, item in enumerate(recent_user_messages, start=1)
+    )
+    assistant_transcript = "\n\n".join(
+        f"第 {index} 轮助手：{item.content}"
+        for index, item in enumerate(recent_assistant_messages, start=1)
+    )
+    model_name = next(
+        (
+            item.model_name
+            for item in reversed(messages)
+            if item.model_name and item.role == "assistant"
+        ),
+        None,
+    ) or next(
+        (item.model_name for item in reversed(messages) if item.model_name),
+        "",
+    )
+    if not model_name:
+        return MemoryLearningResult(status="failed")
+
+    return await learn_from_exchange(
+        runtime,
+        settings,
+        user_id,
+        recent_user_messages[-1].id,
+        user_transcript,
+        assistant_transcript,
+        model_name,
+    )
 
 
 def _vector_literal(vector: list[float]) -> str:
@@ -503,6 +583,35 @@ async def list_memory_items(
         }
         for item in rows
     ]
+
+
+async def memory_store_stats(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    user_id: UUID,
+) -> dict[str, int]:
+    async with runtime.sessions() as session:
+        memory_count = await session.scalar(
+            select(func.count(MemoryItem.id)).where(
+                MemoryItem.user_id == user_id,
+                MemoryItem.status == "active",
+            )
+        )
+        embedding_count = await session.scalar(
+            select(func.count(MemoryEmbedding.id))
+            .join(MemoryItem, MemoryItem.id == MemoryEmbedding.memory_id)
+            .where(
+                MemoryEmbedding.user_id == user_id,
+                MemoryItem.status == "active",
+            )
+        )
+    graph = await load_memory_graph(runtime, user_id, settings.memory_graph_limit)
+    return {
+        "memories": int(memory_count or 0),
+        "embeddings": int(embedding_count or 0),
+        "graph_nodes": len(graph["nodes"]),
+        "graph_edges": len(graph["edges"]),
+    }
 
 
 async def forget_memory_item(

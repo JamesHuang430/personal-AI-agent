@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>知伴 · 私人 AI 助理</title>
+  <title>知伴 · 私人 AI 助理与导演工作室</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -12,10 +12,10 @@
     <section class="auth-visual">
       <div class="brand brand-light"><span class="brand-mark">知</span><span>知伴 AI</span></div>
       <div class="hero-copy">
-        <p class="eyebrow">YOUR PERSONAL INTELLIGENCE</p>
-        <h1>把琐事交给 AI，<br>把时间留给自己。</h1>
-        <p>一个会成长的私人助理，帮你规划、检索、整理知识，也陪你聊聊天。</p>
-        <div class="hero-chips"><span>行程规划</span><span>知识问答</span><span>文档理解</span></div>
+        <p class="eyebrow">KNOWLEDGE × CREATION</p>
+        <h1>让知识留下来，<br>让故事动起来。</h1>
+        <p>一个持续了解你的 AI 搭档：日常对话沉淀个人知识，创作时化身制片团队，陪你把灵感做成短剧。</p>
+        <div class="hero-chips"><span>知识积累</span><span>多 Agent 协作</span><span>AI 短剧制作</span></div>
       </div>
       <div class="orb orb-one"></div><div class="orb orb-two"></div>
     </section>
@@ -78,20 +78,44 @@
   <div id="app-view" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">知</span><span>知伴 AI</span></div>
-      <button id="new-chat" class="new-chat" type="button">＋ 新建对话</button>
-      <p class="section-label">最近对话</p>
-      <div id="history-list" class="history-list">
-        <button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>
+      <nav class="mode-nav" aria-label="工作区">
+        <button class="mode-nav-item active" type="button" data-workspace="chat">
+          <span class="mode-icon">◇</span><span><strong>知识对话</strong><small>问答与个人数据积累</small></span>
+        </button>
+        <button class="mode-nav-item" type="button" data-workspace="studio">
+          <span class="mode-icon">▶</span><span><strong>导演工作室</strong><small>多 Agent 短剧制作</small></span>
+        </button>
+      </nav>
+      <div id="chat-sidebar-context" class="sidebar-context">
+        <button id="new-chat" class="new-chat" type="button">＋ 新建对话</button>
+        <p class="section-label">最近对话</p>
+        <div id="history-list" class="history-list">
+          <button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>
+        </div>
       </div>
-      <div class="sidebar-footer"><span class="status-dot"></span> 服务运行正常</div>
+      <div id="studio-sidebar-context" class="sidebar-context hidden">
+        <button id="new-project" class="new-project" type="button">＋ 新建短剧项目</button>
+        <p class="section-label">正在制作</p>
+        <div class="project-list">
+          <button class="project-item active" type="button">
+            <span class="project-cover cover-rain">雨</span>
+            <span><strong>雨停之前</strong><small>第 03 集 · 分镜中</small></span>
+          </button>
+          <button class="project-item" type="button">
+            <span class="project-cover cover-star">星</span>
+            <span><strong>星港来信</strong><small>世界观待确认</small></span>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-footer"><span class="status-dot"></span> 1 位总导演 + 8 位把关 Agent</div>
     </aside>
 
     <main class="workspace">
       <header class="topbar">
         <button id="mobile-menu" class="icon-btn mobile-only" type="button">☰</button>
-        <div><strong>私人 AI 助理</strong><span class="version">v0.2</span></div>
+        <div class="workspace-title"><strong id="workspace-title">知识对话</strong><span id="workspace-subtitle">边问边沉淀你的个人知识库</span></div>
         <div class="top-actions">
-          <button id="memory-btn" class="memory-pill" type="button">⌘ 记忆图谱</button>
+          <button id="memory-btn" class="memory-pill" type="button">⌘ 个人知识库</button>
           <button id="points-btn" class="points-pill" type="button">◆ <span id="points-value">0</span> 积分</button>
           <button id="checkin-btn" class="outline-btn" type="button">签到 +100</button>
           <div class="profile-wrap">
@@ -104,12 +128,19 @@
         </div>
       </header>
 
-      <section class="chat-area">
+      <section id="chat-workspace" class="chat-area">
         <div id="messages" class="messages">
           <div class="welcome-block">
             <div class="assistant-logo">知</div>
             <h2>你好，我是知伴</h2>
-            <p>今天想让我帮你做什么？</p>
+            <p>和我聊想法、计划与素材，会话结束后我会自动整理到你的个人知识库。</p>
+            <div class="knowledge-flow" aria-label="对话知识沉淀流程">
+              <div><span>聊</span><strong>自然对话</strong><small>想法与素材</small></div>
+              <i>→</i>
+              <div><span>理</span><strong>会话整理</strong><small>自动提炼与归类</small></div>
+              <i>→</i>
+              <div><span>存</span><strong>双重持久化</strong><small>向量记忆 + 知识图谱</small></div>
+            </div>
             <div class="prompt-grid">
               <button type="button" data-prompt="帮我规划一个三天两夜的周末旅行">🧭 规划一次周末旅行</button>
               <button type="button" data-prompt="帮我整理今天最重要的三件事">✓ 整理今日待办</button>
@@ -121,6 +152,11 @@
           </div>
         </div>
         <div class="composer-wrap">
+          <div class="capture-status" aria-live="polite">
+            <span class="capture-mark">◎</span>
+            <div><strong>知识沉淀已开启</strong><small id="session-memory-status">本次会话结束后，将自动提炼素材、想法、目标与关系</small></div>
+            <button id="organize-session" type="button" disabled>结束并整理</button>
+          </div>
           <div class="model-picker">
             <label for="model-select">本次使用</label>
             <select id="model-select" aria-label="选择大模型" disabled>
@@ -136,6 +172,110 @@
           <p class="ai-note">AI 生成内容仅供参考，请核验重要信息</p>
         </div>
       </section>
+
+      <section id="studio-workspace" class="studio-area hidden" aria-label="AI 短剧导演工作室">
+        <div class="studio-scroll">
+          <header class="production-header">
+            <div>
+              <div class="production-kicker"><span class="live-dot"></span> PRODUCTION 01 · EPISODE 03</div>
+              <h1>雨停之前 <span>「未寄出的告白」</span></h1>
+              <p>都市情感 · 竖屏 9:16 · 预计 1′42″ · 24 个镜头</p>
+            </div>
+            <div class="production-actions">
+              <button id="project-settings" class="ghost-btn" type="button">制作设定</button>
+              <button id="continue-production" class="studio-primary" type="button">继续制作 <span>→</span></button>
+            </div>
+          </header>
+
+          <section class="director-brief" aria-labelledby="director-heading">
+            <div class="director-avatar"><span>总</span><i></i></div>
+            <div class="director-copy">
+              <div class="agent-label"><span>总导演 AGENT · 1 / 9</span><span class="working-badge">正在统筹</span></div>
+              <h2 id="director-heading">分镜叙事已通过，正在守住“错过”这一核心情绪</h2>
+              <p>总导演只负责全局统筹，不代替专业审核。下方 8 位关卡 Agent 各自独立验收交付物，并有权退回上游重做。</p>
+            </div>
+            <div class="director-progress"><strong>42%</strong><span>整体进度</span><div><i></i></div></div>
+          </section>
+
+          <section class="pipeline-section" aria-labelledby="pipeline-heading">
+            <div class="section-heading">
+              <div><span class="section-index">01</span><div><h2 id="pipeline-heading">8 位专业 Agent · 8 道独立门禁</h2><p>每位 Agent 负责一个关键点，必须验收通过才能交给下一位</p></div></div>
+              <div class="pipeline-legend"><span><i class="done"></i>已通过</span><span><i class="active"></i>进行中</span><span><i></i>待开始</span></div>
+            </div>
+            <div class="agent-org" aria-label="九位 Agent 的协作关系">
+              <div class="org-director"><span>总</span><div><strong>总导演 Agent</strong><small>统筹全局 · 调度与最终决策</small><b data-agent-model="director">动态匹配中…</b></div><em>1 位</em></div>
+              <div class="org-bridge"><span>派发任务</span><i>→</i><span>专业验收</span><i>→</i><span>通过 / 退回</span></div>
+              <div class="org-gates">
+                <div><span>策</span><strong>策划 Agent</strong><small>选题与钩子</small><em data-agent-model="concept">匹配中…</em></div>
+                <div><span>文</span><strong>编剧 Agent</strong><small>结构与人物</small><em data-agent-model="script">匹配中…</em></div>
+                <div><span>角</span><strong>美术 Agent</strong><small>资产与一致性</small><em data-agent-model="assets">匹配中…</em></div>
+                <div class="working"><span>镜</span><strong>分镜 Agent</strong><small>镜头与节奏</small><em data-agent-model="storyboard">匹配中…</em></div>
+                <div><span>帧</span><strong>摄影 Agent</strong><small>画面与动作</small><em data-agent-model="video">匹配中…</em></div>
+                <div><span>声</span><strong>声音 Agent</strong><small>表演与声场</small><em data-agent-model="audio">匹配中…</em></div>
+                <div><span>剪</span><strong>剪辑 Agent</strong><small>叙事与合成</small><em data-agent-model="edit">匹配中…</em></div>
+                <div><span>审</span><strong>监制 Agent</strong><small>质量与合规</small><em data-agent-model="quality">匹配中…</em></div>
+              </div>
+            </div>
+            <div id="agent-pipeline" class="agent-pipeline" role="list" aria-label="短剧制作流程">
+              <button class="pipeline-stage done" type="button" data-stage="concept" aria-pressed="false"><span class="stage-number">门禁 01</span><span class="stage-icon">策</span><strong>创意立项</strong><small>策划 Agent · 独立把关</small><b>验收：选题 / 受众 / 钩子</b><em>已通过</em></button>
+              <button class="pipeline-stage done" type="button" data-stage="script" aria-pressed="false"><span class="stage-number">门禁 02</span><span class="stage-icon">文</span><strong>剧本节拍</strong><small>编剧 Agent · 独立把关</small><b>验收：结构 / 人物 / 台词</b><em>已通过</em></button>
+              <button class="pipeline-stage done" type="button" data-stage="assets" aria-pressed="false"><span class="stage-number">门禁 03</span><span class="stage-icon">角</span><strong>资产定妆</strong><small>美术 Agent · 独立把关</small><b>验收：角色 / 场景 / 连续性</b><em>已锁定</em></button>
+              <button class="pipeline-stage active" type="button" data-stage="storyboard" aria-pressed="true"><span class="stage-number">门禁 04</span><span class="stage-icon">镜</span><strong>分镜设计</strong><small>分镜 Agent · 独立把关</small><b>验收：构图 / 轴线 / 节奏</b><em>进行中</em></button>
+              <button class="pipeline-stage" type="button" data-stage="video" aria-pressed="false"><span class="stage-number">门禁 05</span><span class="stage-icon">帧</span><strong>镜头生成</strong><small>摄影 Agent · 独立把关</small><b>验收：画面 / 动作 / 稳定性</b><em>等待上游</em></button>
+              <button class="pipeline-stage" type="button" data-stage="audio" aria-pressed="false"><span class="stage-number">门禁 06</span><span class="stage-icon">声</span><strong>声音表演</strong><small>声音 Agent · 独立把关</small><b>验收：声纹 / 口型 / 声场</b><em>等待上游</em></button>
+              <button class="pipeline-stage" type="button" data-stage="edit" aria-pressed="false"><span class="stage-number">门禁 07</span><span class="stage-icon">剪</span><strong>剪辑合成</strong><small>剪辑 Agent · 独立把关</small><b>验收：叙事 / 节奏 / 合成</b><em>等待上游</em></button>
+              <button class="pipeline-stage" type="button" data-stage="quality" aria-pressed="false"><span class="stage-number">门禁 08</span><span class="stage-icon">审</span><strong>终审发布</strong><small>监制 Agent · 独立把关</small><b>验收：质量 / 版权 / 合规</b><em>等待上游</em></button>
+            </div>
+          </section>
+
+          <div class="production-grid">
+            <section class="stage-workbench" aria-labelledby="stage-title">
+              <div class="workbench-header">
+                <div class="agent-identity"><div id="stage-avatar" class="stage-avatar">镜</div><div><div id="stage-role" class="agent-label">分镜导演 AGENT · 正在工作</div><h2 id="stage-title">第 12 镜：反打会削弱“错过”的力度</h2></div></div>
+                <span id="stage-status" class="stage-status">等待你确认</span>
+              </div>
+              <div class="decision-block">
+                <div class="decision-heading"><span>◌</span><strong>判断摘要</strong><small>可审计记录 · 16:42</small></div>
+                <p id="stage-summary">如果现在切到林夏的正面表情，观众会提前获得情绪答案。保留车窗倒影，让她的反应晚 1.5 秒出现，能把“差一点看见”的遗憾留给观众。</p>
+                <div id="stage-evidence" class="evidence-list">
+                  <span><i>✓</i> 与第 11 镜的视线方向连续</span>
+                  <span><i>✓</i> 主角发型、耳饰、雨量与资产库一致</span>
+                  <span><i>!</i> 镜头时长建议从 4.0s 调整为 5.5s</span>
+                </div>
+              </div>
+              <div id="stage-deliverable" class="deliverable-row">
+                <div><span>当前交付物</span><strong>SHOT 12 · 车窗倒影构图 v3</strong><small>景别：近景 · 焦段：85mm · 运镜：缓慢侧移</small></div>
+                <button id="view-deliverable" type="button">查看画板 ↗</button>
+              </div>
+              <div class="approval-row">
+                <button id="request-revision" class="ghost-btn" type="button">提出修改</button>
+                <button id="approve-stage" class="studio-primary" type="button">采纳并流转 <span>→</span></button>
+              </div>
+            </section>
+
+            <aside class="context-panel" aria-labelledby="context-heading">
+              <div class="context-header"><div><span class="section-index">02</span><h2 id="context-heading">连续性记忆</h2></div><span>自动同步</span></div>
+              <div class="continuity-score"><div><strong>93</strong><span>/ 100</span></div><p>跨镜头一致性</p><i><b></b></i></div>
+              <div class="context-group"><h3>已锁定资产</h3><div class="asset-stack">
+                <button type="button"><span class="asset-thumb person-one">林</span><span><strong>林夏 · 女主</strong><small>正 / 侧 / 背 · 6 张参考</small></span><em>LOCK</em></button>
+                <button type="button"><span class="asset-thumb person-two">程</span><span><strong>程野 · 男主</strong><small>正 / 侧 / 背 · 5 张参考</small></span><em>LOCK</em></button>
+                <button type="button"><span class="asset-thumb location-one">站</span><span><strong>雨夜公交站</strong><small>冷青色 · 23:10 · 中雨</small></span><em>LOCK</em></button>
+              </div></div>
+              <div class="context-group guardrails"><h3>本集不可违背</h3><p><span>01</span>林夏直到结尾都没有读到那封信</p><p><span>02</span>暖色只出现在两人的共同回忆里</p><p><span>03</span>现实段落不使用稳定器式运镜</p></div>
+            </aside>
+          </div>
+
+          <section class="shot-board" aria-labelledby="shot-heading">
+            <div class="section-heading compact"><div><span class="section-index">03</span><div><h2 id="shot-heading">分镜画板</h2><p>场次 07 · 雨夜公交站 · 6 / 8 镜已确认</p></div></div><button id="show-all-shots" class="text-action" type="button">查看全部 24 镜 →</button></div>
+            <div class="shot-strip">
+              <button class="shot-card approved" type="button"><div class="shot-frame frame-wide"><span>11</span><i></i></div><strong>远处的末班车</strong><small>4.0s · 缓推</small></button>
+              <button class="shot-card selected" type="button"><div class="shot-frame frame-window"><span>12</span><i></i><b></b></div><strong>车窗里的倒影</strong><small>5.5s · 侧移</small></button>
+              <button class="shot-card" type="button"><div class="shot-frame frame-letter"><span>13</span><i></i></div><strong>被雨打湿的信</strong><small>3.0s · 静止</small></button>
+              <button class="shot-card pending" type="button"><div class="shot-frame frame-pending"><span>14</span><i>等待生成</i></div><strong>隔街错身</strong><small>镜头生成未开始</small></button>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -148,13 +288,18 @@
 
   <dialog id="memory-dialog" class="modal memory-modal">
     <div class="modal-header">
-      <div><p class="eyebrow purple">PERSONAL MEMORY</p><h2>我的记忆图谱</h2></div>
+      <div><p class="eyebrow purple">PERSONAL KNOWLEDGE</p><h2>我的个人知识库</h2></div>
       <button id="memory-close" class="close-btn" type="button">×</button>
     </div>
-    <p class="muted">节点和关系来自对话中的长期信息；你可以删除不希望继续使用的记忆。</p>
+    <p class="muted">每次会话结束后自动整理。语义内容进入向量数据库，人物、项目、偏好和事件关系进入知识图谱；你可以删除任何不希望保留的信息。</p>
+    <div class="knowledge-store-summary">
+      <div><span>◫</span><p><strong id="vector-memory-count">—</strong><small>条向量记忆</small></p><em>语义检索</em></div>
+      <div><span>⌘</span><p><strong id="graph-node-count">—</strong><small>个知识节点</small></p><em>关系推理</em></div>
+      <div><span>↗</span><p><strong id="graph-edge-count">—</strong><small>条实体关系</small></p><em>持续增长</em></div>
+    </div>
     <div class="memory-layout">
-      <div id="memory-graph" class="memory-graph"><p class="muted">正在加载图谱…</p></div>
-      <div><h3>长期记忆</h3><div id="memory-items" class="memory-items"></div></div>
+      <div><div class="knowledge-panel-title"><h3>个人图知识库</h3><span>可视化关系网络</span></div><div id="memory-graph" class="memory-graph"><p class="muted">正在加载图谱…</p></div></div>
+      <div><div class="knowledge-panel-title"><h3>向量记忆</h3><span>按相关性参与对话</span></div><div id="memory-items" class="memory-items"></div></div>
     </div>
   </dialog>
 

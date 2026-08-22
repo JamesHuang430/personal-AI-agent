@@ -35,8 +35,10 @@ COPY assistant_app ./assistant_app
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-RUN chmod -R a+rX /app \
-    && python -m pip install --no-deps .
+# Dependencies are already installed in the stable layer above. Uvicorn and Alembic
+# import the current application directly from /app, so reinstalling the wheel here
+# would only risk replacing freshly copied source with stale build artifacts.
+RUN chmod -R a+rX /app
 
 ENV ASSISTANT_MEMORY_EMBEDDING_PROVIDER=local \
     ASSISTANT_MEMORY_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \

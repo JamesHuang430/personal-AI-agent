@@ -35,6 +35,9 @@ def upgrade() -> None:
         $block$;
         """
     )
+    # AGE needs ag_catalog on the search path while its graph is initialized,
+    # but application tables must remain in the default public schema.
+    op.execute('SET search_path = "$user", public')
 
     op.create_table(
         "conversations",

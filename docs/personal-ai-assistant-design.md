@@ -72,7 +72,7 @@ flowchart TB
 
     AGENT --> RETRIEVAL["混合检索与 GraphRAG"]
     RETRIEVAL --> PG["PostgreSQL + pgvector"]
-    RETRIEVAL --> GRAPH["Neo4j"]
+    RETRIEVAL --> GRAPH["PostgreSQL + Apache AGE"]
 
     API --> QUEUE["Redis 任务队列"]
     QUEUE --> WORKER["文档 / 图谱异步 Worker"]
@@ -103,14 +103,14 @@ flowchart TB
 | 模型接入 | 自定义 `ModelGateway`，首期支持 OpenAI-compatible API | 可沿用现有兼容接口，也能替换云端或本地模型 |
 | 业务数据库 | PostgreSQL | 保存用户、会话、权限、工具、文档元数据和审计日志 |
 | 向量检索 | pgvector（HNSW）+ PostgreSQL 全文检索 | 个人规模下减少独立向量库运维，兼顾元数据过滤与事务一致性 |
-| 图数据库 | Neo4j Community | 属性图、Cypher 查询、邻域遍历及 GraphRAG 生态完整 |
+| 图数据库 | Apache AGE | 与 PostgreSQL 共用事务和备份，同时支持 openCypher 与 SQL 混合查询 |
 | 对象存储 | MinIO；也可直连云厂商 S3 | 存储文档原件、解析结果、缩略图和导出文件 |
 | 队列与缓存 | Redis + Dramatiq/Celery（二选一，建议 Dramatiq 起步） | 文档 OCR、向量化、实体抽取需要异步、重试和进度反馈 |
 | 文档解析 | Docling + Tesseract/RapidOCR | 本地解析布局、表格和扫描文档，原文无需先交给第三方解析服务 |
 | 接入 | Caddy；可选 Cloudflare Tunnel + Access | 自动 TLS；单用户部署可叠加身份代理并隐藏源站入口 |
 | 可观测性 | 结构化日志 + OpenTelemetry；可选 Prometheus/Grafana | 首期轻量，保留完整调用链和后续扩展能力 |
 
-LangGraph 的检查点可支持故障恢复、人机审批和会话记忆；pgvector 支持精确检索以及 HNSW/IVFFlat 近似索引；Neo4j 官方 GraphRAG 包提供向量、图遍历和知识图谱构建能力。这些能力分别见 [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)、[pgvector](https://github.com/pgvector/pgvector) 和 [Neo4j GraphRAG](https://neo4j.com/docs/neo4j-graphrag-python/current/)。
+LangGraph 的检查点可支持故障恢复、人机审批和会话记忆；pgvector 支持精确检索以及 HNSW/IVFFlat 近似索引；Apache AGE 在 PostgreSQL 中提供 openCypher 图查询。这些能力分别见 [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)、[pgvector](https://github.com/pgvector/pgvector) 和 [Apache AGE](https://age.apache.org/overview/)。
 
 ## 5. Agent 运行设计
 
@@ -253,7 +253,7 @@ flowchart LR
     F --> G["Embedding + 全文索引"]
     G --> H["实体关系抽取"]
     H --> I["实体消歧/合并"]
-    I --> J["写入 Neo4j，关联来源切片"]
+    I --> J["写入 Apache AGE，关联来源切片"]
 ```
 
 Docling 可在本地处理常见文档、版面、表格与 OCR，相关能力见 [Docling 安装与 OCR](https://docling-project.github.io/docling/getting_started/installation/)和 [REST API](https://docling-project.github.io/docling/usage/api_server/rest_api/)。
@@ -271,7 +271,7 @@ Docling 可在本地处理常见文档、版面、表格与 OCR，相关能力�
 1. 查询改写和实体识别。
 2. PostgreSQL 全文检索获取关键词候选。
 3. pgvector 获取语义候选，并按用户、文档权限和版本过滤。
-4. 在 Neo4j 中匹配实体，展开有限跳数的关系与相关来源块。
+4. 在 Apache AGE 中匹配实体，展开有限跳数的关系与相关来源块。
 5. 使用 RRF 或可配置打分融合候选，必要时 rerank。
 6. 在上下文预算内去重和多样化选取证据。
 7. 生成回答后检查每个关键事实是否能映射到证据。
@@ -318,7 +318,7 @@ status = proposed | confirmed | rejected
 - 对“合并错误”执行拆分，对错误事实执行拒绝；
 - 从一次问答跳转到本次用到的证据子图。
 
-后端只返回经过 ACL 过滤的子图，浏览器不能直连 Neo4j。
+后端只返回经过 ACL 过滤的子图，浏览器不能直连 PostgreSQL/AGE。
 
 ## 9. 前端产品结构
 
@@ -381,7 +381,6 @@ assistant-worker     文档解析、OCR、Embedding、图谱抽取
 postgres             PostgreSQL + pgvector
 redis                队列、短期缓存、分布式锁
 minio                文档与派生文件
-neo4j                知识图谱（graph profile）
 caddy                 反向代理与 TLS（direct-ingress profile）
 cloudflared           可选安全隧道（tunnel-ingress profile）
 ```
@@ -390,9 +389,9 @@ cloudflared           可选安全隧道（tunnel-ingress profile）
 
 - `edge_net`：只有接入层和 Web/API。
 - `app_net`：API、Worker 与内部服务。
-- `data_net`：数据库、Redis、MinIO、Neo4j；`internal: true`，不向公网映射端口。
+- `data_net`：PostgreSQL/AGE、Redis、MinIO；`internal: true`，不向公网映射端口。
 
-持久卷：`postgres_data`、`minio_data`、`neo4j_data`。Redis 的任务消息可开启 AOF；临时缓存无需长期持久化。镜像使用非 root 用户、固定版本标签、只读根文件系统（需要写入的目录单独挂载）并配置健康检查。
+持久卷：`postgres_data`、`minio_data`。Redis 的任务消息可开启 AOF；临时缓存无需长期持久化。镜像使用非 root 用户、固定版本标签、只读根文件系统（需要写入的目录单独挂载）并配置健康检查。
 
 ### 12.2 两种接入模式
 
@@ -403,8 +402,8 @@ cloudflared           可选安全隧道（tunnel-ingress profile）
 
 | 配置 | 适用场景 |
 |---|---|
-| 2 vCPU / 4 GB / 40 GB | 轻量版：外部模型、少量文档、不运行 Neo4j 或只按需启动 |
-| 4 vCPU / 8 GB / 80 GB | 推荐起点：外部模型、Neo4j、CPU 文档解析和个人知识库 |
+| 2 vCPU / 4 GB / 40 GB | 轻量版：外部模型、少量文档、PostgreSQL 内运行 AGE 与 pgvector |
+| 4 vCPU / 8 GB / 80 GB | 推荐起点：外部模型、CPU 文档解析和个人知识库 |
 | 8 vCPU / 16 GB+ | 较多 OCR、批量建图或多用户试用 |
 
 本地运行生成式大模型不包含在上述预算内；若要本地模型，应根据模型量化大小另配内存/GPU。个人服务器首期建议使用外部 LLM，Embedding 可在云端与本地小模型之间选择。
@@ -413,7 +412,7 @@ cloudflared           可选安全隧道（tunnel-ingress profile）
 
 - CI 构建固定版本镜像并生成 SBOM，部署时执行数据库迁移、健康检查和冒烟测试。
 - 更新采用“备份 → 拉取镜像 → migration → 滚动重启 → 健康检查”；失败时回滚应用镜像，数据库迁移必须提供向前修复策略。
-- PostgreSQL 每日逻辑备份；Neo4j、MinIO 每日/每周快照；使用 restic 加密上传到另一地域对象存储。
+- PostgreSQL（包含 AGE 与 pgvector）每日逻辑备份；MinIO 每日/每周快照；使用 restic 加密上传到另一地域对象存储。
 - 默认目标：RPO 24 小时、RTO 2 小时；每月做一次实际恢复演练。
 - `.env` 只作为本地开发方式；生产优先 Docker Secrets、SOPS 或云端密钥管理服务。
 
@@ -503,7 +502,7 @@ cloudflared           可选安全隧道（tunnel-ingress profile）
 
 ### 阶段 4：知识图谱与 GraphRAG（2–3 周）
 
-- Neo4j schema、实体关系抽取、消歧、溯源和人工纠错。
+- Apache AGE schema、实体关系抽取、消歧、溯源和人工纠错。
 - Graph Explorer 与向量/图谱联合检索。
 
 **完成标准**：每条关系有来源与置信度；问答能返回本次使用的证据子图；纠错会影响后续检索。
@@ -543,4 +542,3 @@ cloudflared           可选安全隧道（tunnel-ingress profile）
 ## 18. 最终建议
 
 以“阶段 0 + 阶段 1 + 阶段 3”为第一个真正有价值的版本：先得到安全、可对话、能用工具、能读个人文档且回答有引用的助理。交通查询作为独立 Provider 并行验证数据资质；知识图谱在文档管线稳定后建设。这样可以先解决核心体验，也避免因票务接口或图谱抽取质量拖住整个项目。
-

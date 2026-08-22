@@ -8,9 +8,9 @@
 - Internal upstreams: `assistant-api:8000` and `admin-api:8000`
 - Running profiles: base only
 - Base services: `nginx`, `assistant-api`, `admin-api`, `postgres`, `redis`
-- Deferred profiles: `storage` (MinIO), `graph` (Neo4j)
-- Alembic head: `20260820_0005`
-- pgvector: enabled
+- Deferred profile: `storage` (MinIO)
+- Alembic head: `20260822_0008`
+- PostgreSQL extensions: pgvector `0.8.6`, Apache AGE `1.6.0`
 
 ## Legacy service status
 
@@ -29,8 +29,9 @@ Verification after cutover:
 
 - API liveness: OK
 - PostgreSQL and Redis readiness: OK
-- Alembic head: `20260820_0005`
+- Alembic head: `20260822_0008`
 - pgvector: `0.8.6`
+- Apache AGE: `1.6.0`
 - Nginx is the only public Web entry point. Application APIs, PostgreSQL and
   Redis remain internal.
 

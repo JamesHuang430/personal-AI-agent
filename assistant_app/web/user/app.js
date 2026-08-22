@@ -5,9 +5,12 @@ const toast = $('#toast');
 let authMode = 'login';
 let currentUser = null;
 let conversation = [];
+let currentConversationId = null;
 let userCaptchaId = '';
 let resetCaptchaId = '';
 let registrationCodeSent = false;
+let modelsLoading = false;
+const customModelValue = '__custom__';
 const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token');
 
 async function api(path, options = {}) {
@@ -83,6 +86,96 @@ function showApp(user) {
   authView.classList.add('hidden');
   appView.classList.remove('hidden');
   updateUser(user);
+  loadModels();
+  loadConversations();
+}
+
+async function loadConversations() {
+  try {
+    const items = await api('/chat/conversations');
+    const list = $('#history-list');
+    list.innerHTML = '';
+    if (!items.length) {
+      list.innerHTML = '<button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>';
+      return;
+    }
+    for (const item of items) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `history-item ${item.id === currentConversationId ? 'active' : ''}`;
+      button.innerHTML = `<span>✦</span><span>${escapeHtml(item.title)}</span>`;
+      button.addEventListener('click', () => openConversation(item.id));
+      list.appendChild(button);
+    }
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function openConversation(conversationId) {
+  try {
+    const result = await api(`/chat/conversations/${conversationId}`);
+    currentConversationId = conversationId;
+    conversation = result.messages.map((item) => ({ role: item.role, content: item.content }));
+    $('#messages').innerHTML = '';
+    for (const item of result.messages) {
+      const meta = item.role === 'assistant' && item.model
+        ? `${item.channel || '模型渠道'} · ${item.model}`
+        : '';
+      addMessage(item.role, item.content, meta);
+    }
+    await loadConversations();
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function loadModels() {
+  if (modelsLoading) return;
+  modelsLoading = true;
+  const select = $('#model-select');
+  const custom = $('#model-custom');
+  const refresh = $('#refresh-models');
+  const selected = select.value === customModelValue ? custom.value.trim() : select.value;
+  const previous = selected || window.localStorage.getItem('assistant-model') || '';
+  select.disabled = true;
+  custom.disabled = true;
+  refresh.disabled = true;
+  try {
+    const models = await api('/chat/models');
+    select.replaceChildren(new Option('请选择大模型', ''));
+    for (const model of models) {
+      select.add(new Option(model.model, model.model));
+    }
+    select.add(new Option('自定义模型 ID…', customModelValue));
+    if (models.some((model) => model.model === previous)) {
+      select.value = previous;
+      custom.value = '';
+    } else if (previous) {
+      select.value = customModelValue;
+      custom.value = previous;
+    } else {
+      select.value = '';
+      custom.value = '';
+    }
+  } catch (error) {
+    select.replaceChildren(
+      new Option('模型列表加载失败', ''),
+      new Option('自定义模型 ID…', customModelValue),
+    );
+    if (previous) {
+      select.value = customModelValue;
+      custom.value = previous;
+    }
+    notify(`${error.message}，仍可选择“自定义模型 ID”`);
+  } finally {
+    modelsLoading = false;
+    select.disabled = false;
+    custom.disabled = false;
+    custom.classList.toggle('hidden', select.value !== customModelValue);
+    $('#send-btn').disabled = false;
+    refresh.disabled = false;
+  }
 }
 
 function updateUser(user) {
@@ -110,6 +203,21 @@ $('#register-tab').addEventListener('click', () => setAuthMode('register'));
 $('#captcha-question').addEventListener('click', () => loadCaptcha('user'));
 $('#reset-captcha-question').addEventListener('click', () => loadCaptcha('reset'));
 $('#forgot-password').addEventListener('click', showResetRequest);
+$('#refresh-models').addEventListener('click', loadModels);
+$('#model-select').addEventListener('change', (event) => {
+  const custom = $('#model-custom');
+  const isCustom = event.target.value === customModelValue;
+  custom.classList.toggle('hidden', !isCustom);
+  if (isCustom) {
+    custom.focus();
+  } else if (event.target.value) {
+    window.localStorage.setItem('assistant-model', event.target.value);
+  }
+});
+$('#model-custom').addEventListener('change', (event) => {
+  const value = event.target.value.trim();
+  if (value) window.localStorage.setItem('assistant-model', value);
+});
 document.querySelectorAll('[data-back-login]').forEach((button) => button.addEventListener('click', showStandardLogin));
 
 $('#send-email-code').addEventListener('click', async () => {
@@ -256,6 +364,99 @@ async function showPackages() {
 $('#points-btn').addEventListener('click', showPackages);
 $('.close-btn').addEventListener('click', () => $('#packages-dialog').close());
 
+function renderMemoryGraph(graph) {
+  const host = $('#memory-graph');
+  host.innerHTML = '';
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  if (!nodes.length) {
+    host.innerHTML = '<p class="muted">还没有形成知识图谱，多聊几次后这里会出现与你有关的实体和关系。</p>';
+    return;
+  }
+  const width = 760;
+  const height = 500;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(width, height) * 0.36;
+  const positions = new Map(nodes.map((node, index) => [node.id, {
+    x: centerX + radius * Math.cos((Math.PI * 2 * index) / nodes.length - Math.PI / 2),
+    y: centerY + radius * Math.sin((Math.PI * 2 * index) / nodes.length - Math.PI / 2),
+  }]));
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', '用户知识图谱');
+  for (const edge of edges) {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    if (!source || !target) continue;
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', source.x); line.setAttribute('y1', source.y);
+    line.setAttribute('x2', target.x); line.setAttribute('y2', target.y);
+    line.setAttribute('class', 'graph-edge');
+    svg.appendChild(line);
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', (source.x + target.x) / 2);
+    label.setAttribute('y', (source.y + target.y) / 2 - 5);
+    label.setAttribute('class', 'graph-edge-label');
+    label.textContent = edge.label;
+    svg.appendChild(label);
+  }
+  for (const node of nodes) {
+    const point = positions.get(node.id);
+    const circle = document.createElementNS(ns, 'circle');
+    circle.setAttribute('cx', point.x); circle.setAttribute('cy', point.y);
+    circle.setAttribute('r', 28); circle.setAttribute('class', 'graph-node');
+    svg.appendChild(circle);
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', point.x); label.setAttribute('y', point.y + 44);
+    label.setAttribute('class', 'graph-node-label');
+    label.textContent = node.label.length > 12 ? `${node.label.slice(0, 12)}…` : node.label;
+    svg.appendChild(label);
+    const type = document.createElementNS(ns, 'text');
+    type.setAttribute('x', point.x); type.setAttribute('y', point.y + 4);
+    type.setAttribute('class', 'graph-node-type');
+    type.textContent = node.type.slice(0, 8);
+    svg.appendChild(type);
+  }
+  host.appendChild(svg);
+}
+
+async function showMemory() {
+  const dialog = $('#memory-dialog');
+  dialog.showModal();
+  $('#memory-graph').innerHTML = '<p class="muted">正在加载图谱…</p>';
+  $('#memory-items').innerHTML = '<p class="muted">正在加载记忆…</p>';
+  try {
+    const [graph, memories] = await Promise.all([api('/memory/graph'), api('/memory/items')]);
+    renderMemoryGraph(graph);
+    $('#memory-items').innerHTML = memories.map((item) => `
+      <article class="memory-item" data-memory-id="${item.id}">
+        <div><span>${escapeHtml(item.type)}</span><p>${escapeHtml(item.content)}</p></div>
+        <button type="button" title="删除这条记忆">删除</button>
+      </article>`).join('') || '<p class="muted">暂时没有长期记忆。</p>';
+    document.querySelectorAll('[data-memory-id] button').forEach((button) => button.addEventListener('click', async () => {
+      const item = button.closest('[data-memory-id]');
+      button.disabled = true;
+      try {
+        await api(`/memory/items/${item.dataset.memoryId}`, { method: 'DELETE' });
+        item.remove();
+        notify('记忆已删除，后续回答不会再使用');
+      } catch (error) {
+        button.disabled = false;
+        notify(error.message);
+      }
+    }));
+  } catch (error) {
+    $('#memory-graph').innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+    $('#memory-items').innerHTML = '';
+  }
+}
+
+$('#memory-btn').addEventListener('click', showMemory);
+$('#memory-close').addEventListener('click', () => $('#memory-dialog').close());
+
 function escapeHtml(value) {
   const node = document.createElement('div');
   node.textContent = value;
@@ -322,8 +523,16 @@ async function pollVideoJob(jobId, card) {
 async function sendMessage(text) {
   const content = text.trim();
   if (!content) return;
+  const selection = $('#model-select').value;
+  const selectedModel = selection === customModelValue
+    ? $('#model-custom').value.trim()
+    : selection;
+  if (!selectedModel) {
+    notify('请选择或输入模型 ID');
+    return;
+  }
+  window.localStorage.setItem('assistant-model', selectedModel);
   addMessage('user', content);
-  const priorHistory = conversation.slice(-20);
   conversation.push({ role: 'user', content });
   $('#chat-input').value = '';
   $('#send-btn').disabled = true;
@@ -331,12 +540,14 @@ async function sendMessage(text) {
   try {
     const result = await api('/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: content, history: priorHistory }),
+      body: JSON.stringify({ model: selectedModel, message: content, conversation_id: currentConversationId }),
     });
     pending.remove();
     const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}`);
     renderArtifacts(responseMessage, result);
     conversation.push({ role: 'assistant', content: result.content });
+    currentConversationId = result.conversation_id;
+    loadConversations();
   } catch (error) {
     pending.remove();
     addMessage('assistant', `暂时无法回答：${error.message}`);
@@ -363,7 +574,9 @@ $('#chat-input').addEventListener('input', (event) => {
 document.querySelectorAll('[data-prompt]').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
 $('#new-chat').addEventListener('click', () => {
   conversation = [];
+  currentConversationId = null;
   $('#messages').innerHTML = '<div class="welcome-block"><div class="assistant-logo">知</div><h2>新的对话</h2><p>随时开始，我在这里。</p></div>';
+  loadConversations();
 });
 $('#mobile-menu').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
 

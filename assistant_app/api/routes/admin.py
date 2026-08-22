@@ -77,7 +77,6 @@ class ChannelCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     base_url: str
     api_key: str = Field(min_length=1, max_length=2000)
-    model_name: str = Field(default="gpt-4o-mini", min_length=1, max_length=200)
     qps_limit: int = Field(default=2, ge=1, le=1000)
     is_active: bool = False
 
@@ -86,19 +85,16 @@ class ChannelCreatePayload(BaseModel):
     def valid_base_url(cls, value: str) -> str:
         return _validate_base_url(value)
 
-
 class ChannelUpdatePayload(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     base_url: str | None = None
     api_key: str | None = Field(default=None, min_length=1, max_length=2000)
-    model_name: str | None = Field(default=None, min_length=1, max_length=200)
     qps_limit: int | None = Field(default=None, ge=1, le=1000)
 
     @field_validator("base_url")
     @classmethod
     def valid_base_url(cls, value: str | None) -> str | None:
         return _validate_base_url(value) if value is not None else None
-
 
 class VideoChannelCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -192,7 +188,6 @@ def _channel_payload(item: ModelChannel) -> dict[str, object]:
         "id": str(item.id),
         "name": item.name,
         "base_url": item.base_url,
-        "model_name": item.model_name,
         "qps_limit": item.qps_limit,
         "is_active": item.is_active,
         "api_key_configured": bool(item.encrypted_api_key),
@@ -491,7 +486,6 @@ async def create_model_channel(
         item = ModelChannel(
             name=payload.name.strip(),
             base_url=payload.base_url,
-            model_name=payload.model_name.strip(),
             encrypted_api_key=encrypt_secret(payload.api_key, settings.secret_key),
             qps_limit=payload.qps_limit,
             is_active=payload.is_active,
@@ -521,8 +515,6 @@ async def update_model_channel(
             item.base_url = values["base_url"]
         if "api_key" in values:
             item.encrypted_api_key = encrypt_secret(values["api_key"], settings.secret_key)
-        if "model_name" in values:
-            item.model_name = values["model_name"].strip()
         if "qps_limit" in values:
             item.qps_limit = values["qps_limit"]
         item.updated_at = datetime.now(UTC)

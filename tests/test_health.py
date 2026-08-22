@@ -1,5 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+from assistant_app.api.routes.chat import ChatPayload
 from assistant_app.core.config import Settings
 from assistant_app.main import create_app
 
@@ -24,3 +27,19 @@ def test_root_serves_user_interface() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "私人 AI 助理" in response.text
+    assert '<select id="model-select"' in response.text
+    assert 'id="model-custom"' in response.text
+
+
+def test_chat_requires_user_selected_model() -> None:
+    with pytest.raises(ValidationError):
+        ChatPayload(message="hello")
+
+    payload = ChatPayload(
+        model=" gpt-4.1-mini ",
+        message="hello",
+    )
+    assert payload.model == "gpt-4.1-mini"
+
+    with pytest.raises(ValidationError, match="模型 ID"):
+        ChatPayload(model="   ", message="hello")

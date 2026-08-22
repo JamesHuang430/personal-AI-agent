@@ -77,17 +77,42 @@ async def _enforce_qps(runtime: RuntimeDependencies, channel: ModelChannel) -> N
         raise ModelRateLimitError("当前模型请求较多，请稍后重试")
 
 
-async def chat_completion(
+async def list_available_models(
     runtime: RuntimeDependencies,
     settings: Settings,
-    message: str,
-    history: list[dict[str, str]],
-) -> dict[str, Any]:
+) -> tuple[str, list[str]]:
+    """Discover models from the active OpenAI-compatible channel."""
+
     async with runtime.sessions() as session:
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
         raise ModelChannelUnavailableError("运营后台尚未启用大模型渠道")
 
+    api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
+    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=20) as client:
+        page = await client.models.list()
+    model_names = sorted(
+        {
+            item.id.strip()
+            for item in page.data
+            if isinstance(item.id, str) and 0 < len(item.id.strip()) <= 200
+        }
+    )
+    return channel.name, model_names
+
+
+async def chat_completion(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    model_name: str,
+    message: str,
+    history: list[dict[str, str]],
+    memory_context: str = "",
+) -> dict[str, Any]:
+    async with runtime.sessions() as session:
+        channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
+    if channel is None:
+        raise ModelChannelUnavailableError("运营后台尚未启用大模型渠道")
     await _enforce_qps(runtime, channel)
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
     messages = [
@@ -100,12 +125,13 @@ async def chat_completion(
                 " generate_video。不要声称已经生成文件或视频，必须实际调用对应工具。"
             ),
         },
-        *history[-20:],
-        {"role": "user", "content": message},
     ]
+    if memory_context:
+        messages.append({"role": "system", "content": memory_context})
+    messages.extend([*history[-20:], {"role": "user", "content": message}])
     async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=60) as client:
         completion = await client.chat.completions.create(
-            model=channel.model_name,
+            model=model_name,
             messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
@@ -126,7 +152,7 @@ async def chat_completion(
     return {
         "content": content,
         "channel": channel.name,
-        "model": channel.model_name,
+        "model": model_name,
         "tool_calls": tool_calls[:3],
         "usage": {
             "prompt_tokens": usage.prompt_tokens if usage else None,

@@ -72,16 +72,15 @@
         </section>
 
         <section id="page-channels" class="page hidden">
-          <div class="page-heading"><div><p class="eyebrow purple">MODEL PROVIDERS</p><h1>大模型渠道</h1><p class="muted">配置 OpenAI 兼容渠道，切换当前模型并控制全局 QPS</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow purple">MODEL PROVIDERS</p><h1>大模型渠道</h1><p class="muted">只配置当前 LLM 渠道，具体模型由用户在前端选择</p></div></div>
           <div class="security-banner"><span>⌾</span><div><strong>密钥安全</strong><p>API Key 经加密后入库，保存后不再回显；编辑时留空表示保持原 Key。</p></div></div>
           <form id="channel-form" class="panel editor-form channel-form">
             <input id="channel-id" type="hidden">
             <label>渠道名称<input id="channel-name" placeholder="如：OpenAI 主渠道" required></label>
             <label>Base URL<input id="channel-url" type="url" placeholder="https://api.openai.com/v1" required></label>
             <label>API Key<input id="channel-key" type="password" placeholder="sk-..." required></label>
-            <label>模型名<input id="channel-model" value="gpt-4o-mini" required></label>
             <label>QPS 限制<input id="channel-qps" type="number" min="1" max="1000" value="2" required></label>
-            <label class="switch-label"><input id="channel-active" type="checkbox">保存后立即启用</label>
+            <label class="switch-label"><input id="channel-active" type="checkbox">保存后设为当前渠道</label>
             <div class="form-actions"><button id="channel-save" class="primary" type="submit">新增渠道</button><button id="channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="channel-grid" class="channel-grid"></div>

@@ -23,7 +23,8 @@ COPY assistant_app ./assistant_app
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-RUN python -m pip install .
+RUN chmod -R a+rX /app \
+    && python -m pip install .
 
 USER assistant
 EXPOSE 8000 19000

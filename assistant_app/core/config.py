@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     secret_key: str = "change-this-application-secret-key"
     session_ttl_seconds: int = 604800
     public_url: str = "http://127.0.0.1:18000"
+    memory_enabled: bool = True
+    memory_embedding_model: str = ""
+    memory_retrieval_limit: int = 12
+    memory_graph_limit: int = 200
 
     @property
     def cors_origin_list(self) -> list[str]:

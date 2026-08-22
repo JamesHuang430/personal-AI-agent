@@ -31,6 +31,8 @@ services:
       ASSISTANT_ADMIN_PASSWORD: ${ASSISTANT_ADMIN_PASSWORD:?ASSISTANT_ADMIN_PASSWORD is required}
       ASSISTANT_SECRET_KEY: ${ASSISTANT_SECRET_KEY:?ASSISTANT_SECRET_KEY is required}
       ASSISTANT_PUBLIC_URL: ${ASSISTANT_PUBLIC_URL:-https://127.0.0.1:18000}
+      ASSISTANT_MEMORY_ENABLED: ${ASSISTANT_MEMORY_ENABLED:-true}
+      ASSISTANT_MEMORY_EMBEDDING_MODEL: ${ASSISTANT_MEMORY_EMBEDDING_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +73,8 @@ services:
       ASSISTANT_ADMIN_USERNAME: ${ASSISTANT_ADMIN_USERNAME:-admin}
       ASSISTANT_ADMIN_PASSWORD: ${ASSISTANT_ADMIN_PASSWORD:?ASSISTANT_ADMIN_PASSWORD is required}
       ASSISTANT_SECRET_KEY: ${ASSISTANT_SECRET_KEY:?ASSISTANT_SECRET_KEY is required}
+      ASSISTANT_MEMORY_ENABLED: ${ASSISTANT_MEMORY_ENABLED:-true}
+      ASSISTANT_MEMORY_EMBEDDING_MODEL: ${ASSISTANT_MEMORY_EMBEDDING_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,7 +94,10 @@ services:
 
   postgres:
     <<: *runtime-defaults
-    image: pgvector/pgvector:pg16
+    build:
+      context: ..
+      dockerfile: docker/postgres/Dockerfile
+    image: personal-ai-assistant-postgres:${POSTGRES_IMAGE_TAG:-pg16-trixie-age1.6-vector0.8.6}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-assistant}
       POSTGRES_USER: ${POSTGRES_USER:-assistant}
@@ -147,25 +154,6 @@ services:
     networks:
       - data_net
 
-  neo4j:
-    <<: *runtime-defaults
-    image: neo4j:5.26-community
-    profiles: ["graph"]
-    environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-before-enabling-graph}
-      NEO4J_server_memory_heap_initial__size: 256m
-      NEO4J_server_memory_heap_max__size: 768m
-      NEO4J_server_memory_pagecache_size: 384m
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-    volumes:
-      - neo4j_data:/data
-    networks:
-      - data_net
-
   nginx:
     <<: *runtime-defaults
     image: nginx:stable-alpine
@@ -194,7 +182,6 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
-  neo4j_data:
   generated_files:
 
 networks:

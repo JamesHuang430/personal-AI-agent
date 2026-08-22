@@ -11,19 +11,23 @@
 - 每位用户每天签到一次并获得 100 积分；
 - 用户工作台、积分套餐展示和大模型对话界面；
 - 独立运营后台：用户启停、积分调整、套餐管理；
-- 大模型渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
+- 大模型渠道管理：单一当前渠道的 Base URL、加密 API Key 与全局 QPS；
+- 用户在对话前端选择模型；优先读取渠道的 OpenAI 兼容模型目录，也可直接输入模型 ID；
 - 视频生成渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
 - 邮件渠道管理：运营后台配置 SMTP、加密授权码并发送测试邮件；
 - Agent 可按对话意图生成安全的文本类文件，并提供用户隔离的下载入口；
 - Agent 可创建异步视频任务，查询进度并在完成后下载结果；
+- 服务端持久化会话输入输出，并支持最近对话恢复；
+- PostgreSQL/pgvector 长期记忆检索与 Apache AGE 知识图谱；
+- 用户可查看个人记忆图谱并删除不希望继续使用的记忆；
 - 存活和依赖就绪检查；
 - 请求 ID 与结构化容器日志；
 - 生产环境占位凭证校验；
 - `ModelGateway`、`Tool`、`KnowledgeRetriever`、`TransportSearchProvider` 领域接口；
-- PostgreSQL + pgvector、Redis、MinIO 和可选 Neo4j 的 Compose 服务；
+- PostgreSQL 16 + pgvector + Apache AGE、Redis 和可选 MinIO 的 Compose 服务；
 - Alembic 迁移骨架和基础测试。
 
-文档处理、真实天气/票务 Provider、支付和 GraphRAG 将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
+文档处理、真实天气/票务 Provider 和支付将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
 
 ## Docker 快速启动
 
@@ -56,13 +60,10 @@
 用户端默认访问 `http://127.0.0.1:18000/`，运营后台默认访问
 `http://127.0.0.1:19000/`。
 
-启用知识图谱服务：
+pgvector 与 Apache AGE 已包含在 PostgreSQL 服务中，无需单独启动图数据库。数据库和 Redis 默认不映射宿主机端口；MinIO 的开发端口只绑定在 `127.0.0.1`。API 默认使用宿主机 `18000`，避免与远端现有 `deploy-api-1` 的 `8000` 冲突。
 
-```powershell
-docker compose --profile graph up -d
-```
-
-数据库、Redis 默认不映射宿主机端口。API、MinIO 和 Neo4j 的开发端口只绑定在 `127.0.0.1`。API 默认使用宿主机 `18000`，避免与远端现有 `deploy-api-1` 的 `8000` 冲突。
+若当前大模型渠道提供 Embeddings API，在 `.env` 中设置
+`ASSISTANT_MEMORY_EMBEDDING_MODEL` 即可启用向量召回；留空时会话、长期记忆和图谱仍会正常保存，并使用关键词回退检索。
 
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
 生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。
@@ -93,7 +94,8 @@ docker compose --profile graph up -d
 - `POST /api/v1/auth/register/email-code`：发送注册邮箱验证码。
 - `POST /api/v1/auth/password-reset/request`：发送一次性密码重置链接。
 - `POST /api/v1/users/check-in`：每日签到。
-- `POST /api/v1/chat`：调用当前启用的大模型渠道。
+- `GET /api/v1/chat/models`：动态读取当前 LLM 渠道的 OpenAI 兼容模型目录。
+- `POST /api/v1/chat`：使用用户选择的模型调用当前启用的 LLM 渠道。
 - `GET /api/v1/files`：列出当前用户由 Agent 生成的文件。
 - `GET /api/v1/videos`：列出当前用户的视频生成任务。
 - `GET /api/v1/admin/model-channels`：运营后台渠道清单（仅 `19000` 服务提供）。

@@ -28,14 +28,19 @@ cd "${project_dir}"
 echo "Validating Compose configuration..."
 "${compose_cmd[@]}" config --quiet
 
-echo "Building application image..."
-"${compose_cmd[@]}" build --pull assistant-api
+echo "Building application and PostgreSQL extension images..."
+"${compose_cmd[@]}" build --pull postgres assistant-api
 
-echo "Starting lightweight base stack..."
-"${compose_cmd[@]}" up -d postgres redis assistant-api admin-api nginx
+echo "Starting data services..."
+"${compose_cmd[@]}" up -d postgres redis
 
 echo "Applying database migrations..."
-"${compose_cmd[@]}" exec -T assistant-api alembic upgrade head
+"${compose_cmd[@]}" run --rm --no-deps assistant-api alembic upgrade head
+
+echo "Starting application services..."
+"${compose_cmd[@]}" up -d assistant-api admin-api nginx
+# Refresh Nginx's resolved upstream addresses after application containers are recreated.
+"${compose_cmd[@]}" restart nginx
 
 echo "Waiting for API health..."
 for attempt in $(seq 1 30); do

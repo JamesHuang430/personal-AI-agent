@@ -91,6 +91,7 @@
         <button id="mobile-menu" class="icon-btn mobile-only" type="button">☰</button>
         <div><strong>私人 AI 助理</strong><span class="version">v0.2</span></div>
         <div class="top-actions">
+          <button id="memory-btn" class="memory-pill" type="button">⌘ 记忆图谱</button>
           <button id="points-btn" class="points-pill" type="button">◆ <span id="points-value">0</span> 积分</button>
           <button id="checkin-btn" class="outline-btn" type="button">签到 +100</button>
           <div class="profile-wrap">
@@ -120,7 +121,14 @@
           </div>
         </div>
         <div class="composer-wrap">
-          <p id="model-status" class="model-status">由运营后台当前启用的大模型渠道提供回答</p>
+          <div class="model-picker">
+            <label for="model-select">本次使用</label>
+            <select id="model-select" aria-label="选择大模型" disabled>
+              <option value="">正在加载模型列表…</option>
+            </select>
+            <input id="model-custom" class="hidden" maxlength="200" aria-label="输入自定义模型 ID" placeholder="输入自定义模型 ID">
+            <button id="refresh-models" type="button" title="刷新模型列表">↻</button>
+          </div>
           <form id="chat-form" class="composer">
             <textarea id="chat-input" rows="1" maxlength="8000" placeholder="问我任何事情，Enter 发送，Shift + Enter 换行"></textarea>
             <button id="send-btn" type="submit" aria-label="发送">↑</button>
@@ -136,6 +144,18 @@
     <p class="muted">基础兑换比例为 1 元 = 100 积分，套餐包含额外赠送积分。</p>
     <div id="package-list" class="package-list"></div>
     <p class="payment-note">在线支付将在接入支付渠道后开放，当前可由运营人员调整积分。</p>
+  </dialog>
+
+  <dialog id="memory-dialog" class="modal memory-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">PERSONAL MEMORY</p><h2>我的记忆图谱</h2></div>
+      <button id="memory-close" class="close-btn" type="button">×</button>
+    </div>
+    <p class="muted">节点和关系来自对话中的长期信息；你可以删除不希望继续使用的记忆。</p>
+    <div class="memory-layout">
+      <div id="memory-graph" class="memory-graph"><p class="muted">正在加载图谱…</p></div>
+      <div><h3>长期记忆</h3><div id="memory-items" class="memory-items"></div></div>
+    </div>
   </dialog>
 
   <div id="toast" class="toast hidden"></div>

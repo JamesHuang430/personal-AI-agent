@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,6 +12,7 @@ from assistant_app.db.models import User
 from assistant_app.services.agent_model_router import route_agent_models
 from assistant_app.services.conversations import (
     ConversationNotFoundError,
+    delete_conversation,
     get_conversation_messages,
     list_conversations,
     prepare_conversation,
@@ -143,6 +144,25 @@ async def conversation_messages(
 ) -> dict[str, object]:
     try:
         return await get_conversation_messages(
+            request.app.state.runtime,
+            user.id,
+            conversation_id,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_conversation(
+    conversation_id: UUID,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> None:
+    try:
+        await delete_conversation(
             request.app.state.runtime,
             user.id,
             conversation_id,

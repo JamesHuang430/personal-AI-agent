@@ -104,17 +104,51 @@ async function loadConversations() {
       return;
     }
     for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'history-row';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `history-item ${item.id === currentConversationId ? 'active' : ''}`;
-      button.innerHTML = `<span>✦</span><span>${escapeHtml(item.title)}</span>`;
+      button.title = item.title;
+      button.innerHTML = `<span aria-hidden="true">✦</span><span class="history-title">${escapeHtml(item.title)}</span>`;
       button.addEventListener('click', async () => {
         if (sessionNeedsOrganization) await organizeCurrentConversation();
         await openConversation(item.id);
       });
-      list.appendChild(button);
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'history-delete';
+      deleteButton.setAttribute('aria-label', `删除对话：${item.title}`);
+      deleteButton.title = '删除对话';
+      deleteButton.innerHTML = '<span aria-hidden="true">×</span>';
+      deleteButton.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await deleteConversation(item, deleteButton);
+      });
+
+      row.append(button, deleteButton);
+      list.appendChild(row);
     }
   } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function deleteConversation(item, button) {
+  const confirmed = window.confirm(
+    `确定删除“${item.title}”吗？\n\n删除后无法恢复；已整理进个人知识库的长期记忆不会受影响，尚未整理的内容将不再保留。`,
+  );
+  if (!confirmed) return;
+
+  button.disabled = true;
+  try {
+    await api(`/chat/conversations/${item.id}`, { method: 'DELETE' });
+    if (item.id === currentConversationId) resetConversationView(false);
+    await loadConversations();
+    notify('对话已删除，个人知识库中的长期记忆已保留');
+  } catch (error) {
+    button.disabled = false;
     notify(error.message);
   }
 }
@@ -717,7 +751,7 @@ async function organizeCurrentConversation(force = false) {
   }
 }
 
-function resetConversationView() {
+function resetConversationView(reloadHistory = true) {
   conversation = [];
   currentConversationId = null;
   sessionNeedsOrganization = false;
@@ -725,7 +759,7 @@ function resetConversationView() {
   $('#organize-session').disabled = true;
   $('#session-memory-status').textContent = '本次会话结束后，将自动提炼素材、想法、目标与关系';
   bindPromptButtons();
-  loadConversations();
+  if (reloadHistory) loadConversations();
 }
 
 bindPromptButtons();

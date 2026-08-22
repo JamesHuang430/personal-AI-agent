@@ -59,8 +59,14 @@ button { cursor: pointer; }
 .new-chat { width: 100%; border: 0; border-radius: 12px; padding: 11px 14px; color: white; background: linear-gradient(135deg, var(--primary), #4a83f1); font-weight: 700; }
 .section-label { margin: 24px 10px 8px; color: #a0a8b8; font-size: 11px; font-weight: 750; letter-spacing: .08em; }
 .history-list { display: grid; gap: 6px; }
-.history-item { display: flex; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; color: #566177; background: transparent; text-align: left; }
+.history-row { position: relative; min-width: 0; }
+.history-item { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 42px 10px 12px; border: 1px solid transparent; border-radius: 10px; color: #566177; background: transparent; text-align: left; }
+.history-title { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .history-item.active { color: var(--primary); border-color: #dcd7ff; background: #f3f1ff; }
+.history-delete { position: absolute; top: 50%; right: 5px; width: 34px; height: 34px; transform: translateY(-50%); border: 0; border-radius: 9px; opacity: 0; color: #a36d76; background: transparent; font-size: 22px; line-height: 1; transition: opacity .18s, color .18s, background .18s; }
+.history-row:hover .history-delete, .history-row:focus-within .history-delete { opacity: 1; }
+.history-delete:hover, .history-delete:focus-visible { color: #cf3f50; background: #fff0f2; outline: none; }
+.history-delete:disabled { opacity: .45; cursor: wait; }
 .sidebar-footer { margin-top: auto; padding: 14px 8px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #21c58b; }
 .workspace { min-width: 0; height: 100vh; display: grid; grid-template-rows: 64px minmax(0,1fr); }
@@ -464,6 +470,7 @@ button { cursor: pointer; }
   .sidebar.open + .sidebar-scrim { position: fixed; z-index: 45; inset: 0; display: block; width: 100%; border: 0; background: rgba(17,19,28,.38); backdrop-filter: blur(2px); }
   .new-chat, .new-project { min-height: 44px; }
   .history-item, .project-item { min-height: 46px; }
+  .history-delete { width: 40px; height: 40px; right: 2px; opacity: 1; }
 
   .mobile-mode-nav { position: fixed; z-index: 40; right: 0; bottom: 0; left: 0; height: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(3, 1fr); padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid #e6e9f0; background: rgba(255,255,255,.96); box-shadow: 0 -10px 28px rgba(31,38,74,.08); backdrop-filter: blur(16px); }
   .mobile-mode-nav button { display: grid; place-items: center; align-content: center; gap: 1px; border: 0; border-radius: 10px; color: #9299a9; background: transparent; }

@@ -198,3 +198,22 @@ async def get_conversation_messages(
         "conversation": conversation_payload(conversation),
         "messages": [message_payload(item) for item in messages],
     }
+
+
+async def delete_conversation(
+    runtime: RuntimeDependencies,
+    user_id: UUID,
+    conversation_id: UUID,
+) -> None:
+    """Delete one user's conversation while keeping organized long-term memories."""
+
+    async with runtime.sessions() as session, session.begin():
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.user_id == user_id,
+            )
+        )
+        if conversation is None:
+            raise ConversationNotFoundError("对话不存在或无权访问")
+        await session.delete(conversation)

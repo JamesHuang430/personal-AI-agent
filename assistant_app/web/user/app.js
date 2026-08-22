@@ -516,7 +516,8 @@ function addMessage(role, content, meta = '') {
 function renderArtifacts(message, result) {
   const files = result.files || [];
   const jobs = result.video_jobs || [];
-  if (!files.length && !jobs.length) return;
+  const musicJobs = result.music_jobs || [];
+  if (!files.length && !jobs.length && !musicJobs.length) return;
   const list = document.createElement('div');
   list.className = 'artifact-list';
   for (const file of files) {
@@ -533,7 +534,38 @@ function renderArtifacts(message, result) {
     list.appendChild(card);
     window.setTimeout(() => pollVideoJob(job.id, card), 5000);
   }
+  for (const job of musicJobs) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.innerHTML = `<div><strong>♫ 音乐生成任务</strong><small>排队中 · ${job.is_instrumental ? '纯配乐' : '带人声歌曲'}</small></div><a href="#">刷新状态</a>`;
+    card.querySelector('a').addEventListener('click', (event) => { event.preventDefault(); pollMusicJob(job.id, card); });
+    list.appendChild(card);
+    window.setTimeout(() => pollMusicJob(job.id, card), 5000);
+  }
   message.querySelector('.message-bubble').appendChild(list);
+}
+
+async function pollMusicJob(jobId, card) {
+  try {
+    const job = await api(`/music/${jobId}`);
+    const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
+    const duration = job.duration_ms ? ` · ${Math.round(job.duration_ms / 1000)} 秒` : '';
+    card.querySelector('small').textContent = `${statusText} · ${job.is_instrumental ? '纯配乐' : '带人声歌曲'}${duration}`;
+    if (job.status === 'completed') {
+      card.querySelector('a').textContent = '下载音乐';
+      card.querySelector('a').href = job.download_url;
+      return;
+    }
+    if (job.status === 'failed') {
+      card.classList.add('failed');
+      card.querySelector('small').textContent = job.error_message || '音乐渠道返回失败';
+      card.querySelector('a').remove();
+      return;
+    }
+    window.setTimeout(() => pollMusicJob(jobId, card), 5000);
+  } catch (error) {
+    card.querySelector('small').textContent = error.message;
+  }
 }
 
 async function pollVideoJob(jobId, card) {

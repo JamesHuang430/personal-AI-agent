@@ -63,6 +63,26 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_music",
+            "description": "用户明确要求生成主题曲、配乐、背景音乐或氛围音乐时提交任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "音乐风格、情绪和使用场景"},
+                    "lyrics": {"type": "string", "description": "可选歌词"},
+                    "is_instrumental": {
+                        "type": "boolean",
+                        "description": "纯配乐为 true，带人声歌曲为 false",
+                    },
+                },
+                "required": ["prompt", "is_instrumental"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -86,7 +106,7 @@ async def list_available_models(
     async with runtime.sessions() as session:
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
-        raise ModelChannelUnavailableError("运营后台尚未启用大模型渠道")
+        raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
 
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
     async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=20) as client:
@@ -112,7 +132,7 @@ async def chat_completion(
     async with runtime.sessions() as session:
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
-        raise ModelChannelUnavailableError("运营后台尚未启用大模型渠道")
+        raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
     await _enforce_qps(runtime, channel)
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
     messages = [
@@ -122,7 +142,8 @@ async def chat_completion(
                 "你是一个可靠、友善的私人 AI 助理。使用简体中文回答，"
                 "不知道的信息要明确说明，不要虚构机票、火车票或实时数据。"
                 "用户明确要求生成或导出文件时调用 create_file；明确要求生成视频时调用"
-                " generate_video。不要声称已经生成文件或视频，必须实际调用对应工具。"
+                " generate_video；明确要求主题曲、配乐或背景音乐时调用 generate_music。"
+                "不要声称已经生成文件、视频或音乐，必须实际调用对应工具。"
             ),
         },
     ]

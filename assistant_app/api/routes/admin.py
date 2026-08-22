@@ -17,6 +17,7 @@ from assistant_app.core.time import utc_day_bounds
 from assistant_app.db.models import (
     EmailChannel,
     ModelChannel,
+    MusicChannel,
     Package,
     PointLedger,
     User,
@@ -101,9 +102,11 @@ class VideoChannelCreatePayload(BaseModel):
     base_url: str
     api_key: str = Field(min_length=1, max_length=2000)
     model_name: str = Field(default="sora-2", min_length=1, max_length=200)
+    provider: Literal["openai", "minimax"] = "openai"
     qps_limit: int = Field(default=1, ge=1, le=1000)
     default_seconds: Literal["4", "8", "12"] = "4"
     default_size: Literal["720x1280", "1280x720", "1024x1792", "1792x1024"] = "1280x720"
+    default_resolution: Literal["768P", "2K"] = "768P"
     is_active: bool = False
 
     @field_validator("base_url")
@@ -117,9 +120,40 @@ class VideoChannelUpdatePayload(BaseModel):
     base_url: str | None = None
     api_key: str | None = Field(default=None, min_length=1, max_length=2000)
     model_name: str | None = Field(default=None, min_length=1, max_length=200)
+    provider: Literal["openai", "minimax"] | None = None
     qps_limit: int | None = Field(default=None, ge=1, le=1000)
     default_seconds: Literal["4", "8", "12"] | None = None
     default_size: Literal["720x1280", "1280x720", "1024x1792", "1792x1024"] | None = None
+    default_resolution: Literal["768P", "2K"] | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str | None) -> str | None:
+        return _validate_base_url(value) if value is not None else None
+
+
+class MusicChannelCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    base_url: str
+    api_key: str = Field(min_length=1, max_length=2000)
+    model_name: str = Field(default="music-2.6", min_length=1, max_length=200)
+    qps_limit: int = Field(default=1, ge=1, le=1000)
+    default_format: Literal["mp3", "wav", "flac"] = "mp3"
+    is_active: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str) -> str:
+        return _validate_base_url(value)
+
+
+class MusicChannelUpdatePayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    base_url: str | None = None
+    api_key: str | None = Field(default=None, min_length=1, max_length=2000)
+    model_name: str | None = Field(default=None, min_length=1, max_length=200)
+    qps_limit: int | None = Field(default=None, ge=1, le=1000)
+    default_format: Literal["mp3", "wav", "flac"] | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -201,9 +235,25 @@ def _video_channel_payload(item: VideoChannel) -> dict[str, object]:
         "name": item.name,
         "base_url": item.base_url,
         "model_name": item.model_name,
+        "provider": item.provider,
         "qps_limit": item.qps_limit,
         "default_seconds": item.default_seconds,
         "default_size": item.default_size,
+        "default_resolution": item.default_resolution,
+        "is_active": item.is_active,
+        "api_key_configured": bool(item.encrypted_api_key),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _music_channel_payload(item: MusicChannel) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "base_url": item.base_url,
+        "model_name": item.model_name,
+        "qps_limit": item.qps_limit,
+        "default_format": item.default_format,
         "is_active": item.is_active,
         "api_key_configured": bool(item.encrypted_api_key),
         "updated_at": item.updated_at.isoformat(),
@@ -508,7 +558,7 @@ async def update_model_channel(
     async with runtime.sessions() as session, session.begin():
         item = await session.get(ModelChannel, channel_id, with_for_update=True)
         if item is None:
-            raise HTTPException(status_code=404, detail="大模型渠道不存在")
+            raise HTTPException(status_code=404, detail="文本模型渠道不存在")
         if "name" in values:
             item.name = values["name"].strip()
         if "base_url" in values:
@@ -531,7 +581,7 @@ async def activate_model_channel(
     async with runtime.sessions() as session, session.begin():
         item = await session.get(ModelChannel, channel_id, with_for_update=True)
         if item is None:
-            raise HTTPException(status_code=404, detail="大模型渠道不存在")
+            raise HTTPException(status_code=404, detail="文本模型渠道不存在")
         await session.execute(
             update(ModelChannel).where(ModelChannel.id != channel_id).values(is_active=False)
         )
@@ -550,7 +600,7 @@ async def disable_model_channel(
     async with runtime.sessions() as session, session.begin():
         item = await session.get(ModelChannel, channel_id, with_for_update=True)
         if item is None:
-            raise HTTPException(status_code=404, detail="大模型渠道不存在")
+            raise HTTPException(status_code=404, detail="文本模型渠道不存在")
         item.is_active = False
         item.updated_at = datetime.now(UTC)
     return _channel_payload(item)
@@ -583,10 +633,12 @@ async def create_video_channel(
             name=payload.name.strip(),
             base_url=payload.base_url,
             model_name=payload.model_name.strip(),
+            provider=payload.provider,
             encrypted_api_key=encrypt_secret(payload.api_key, settings.secret_key),
             qps_limit=payload.qps_limit,
             default_seconds=payload.default_seconds,
             default_size=payload.default_size,
+            default_resolution=payload.default_resolution,
             is_active=payload.is_active,
         )
         session.add(item)
@@ -616,12 +668,16 @@ async def update_video_channel(
             item.encrypted_api_key = encrypt_secret(values["api_key"], settings.secret_key)
         if "model_name" in values:
             item.model_name = values["model_name"].strip()
+        if "provider" in values:
+            item.provider = values["provider"]
         if "qps_limit" in values:
             item.qps_limit = values["qps_limit"]
         if "default_seconds" in values:
             item.default_seconds = values["default_seconds"]
         if "default_size" in values:
             item.default_size = values["default_size"]
+        if "default_resolution" in values:
+            item.default_resolution = values["default_resolution"]
         item.updated_at = datetime.now(UTC)
     return _video_channel_payload(item)
 
@@ -659,6 +715,108 @@ async def disable_video_channel(
         item.is_active = False
         item.updated_at = datetime.now(UTC)
     return _video_channel_payload(item)
+
+
+@router.get("/music-channels")
+async def music_channels(
+    request: Request, _admin: Annotated[str, Depends(current_admin)]
+) -> list[dict[str, object]]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        rows = (
+            await session.scalars(select(MusicChannel).order_by(MusicChannel.created_at.desc()))
+        ).all()
+    return [_music_channel_payload(item) for item in rows]
+
+
+@router.post("/music-channels", status_code=status.HTTP_201_CREATED)
+async def create_music_channel(
+    payload: MusicChannelCreatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    async with runtime.sessions() as session, session.begin():
+        if payload.is_active:
+            await session.execute(update(MusicChannel).values(is_active=False))
+        item = MusicChannel(
+            name=payload.name.strip(),
+            base_url=payload.base_url,
+            model_name=payload.model_name.strip(),
+            encrypted_api_key=encrypt_secret(payload.api_key, settings.secret_key),
+            qps_limit=payload.qps_limit,
+            default_format=payload.default_format,
+            is_active=payload.is_active,
+        )
+        session.add(item)
+        await session.flush()
+    return _music_channel_payload(item)
+
+
+@router.patch("/music-channels/{channel_id}")
+async def update_music_channel(
+    channel_id: UUID,
+    payload: MusicChannelUpdatePayload,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    settings = request.app.state.settings
+    values = payload.model_dump(exclude_unset=True)
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(MusicChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="音乐生成渠道不存在")
+        if "name" in values:
+            item.name = values["name"].strip()
+        if "base_url" in values:
+            item.base_url = values["base_url"]
+        if "api_key" in values:
+            item.encrypted_api_key = encrypt_secret(values["api_key"], settings.secret_key)
+        if "model_name" in values:
+            item.model_name = values["model_name"].strip()
+        if "qps_limit" in values:
+            item.qps_limit = values["qps_limit"]
+        if "default_format" in values:
+            item.default_format = values["default_format"]
+        item.updated_at = datetime.now(UTC)
+    return _music_channel_payload(item)
+
+
+@router.post("/music-channels/{channel_id}/activate")
+async def activate_music_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(MusicChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="音乐生成渠道不存在")
+        await session.execute(
+            update(MusicChannel).where(MusicChannel.id != channel_id).values(is_active=False)
+        )
+        item.is_active = True
+        item.updated_at = datetime.now(UTC)
+    return _music_channel_payload(item)
+
+
+@router.post("/music-channels/{channel_id}/disable")
+async def disable_music_channel(
+    channel_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session, session.begin():
+        item = await session.get(MusicChannel, channel_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="音乐生成渠道不存在")
+        item.is_active = False
+        item.updated_at = datetime.now(UTC)
+    return _music_channel_payload(item)
 
 
 @router.get("/email-channel")

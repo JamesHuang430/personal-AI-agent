@@ -29,6 +29,12 @@ from assistant_app.services.model_gateway import (
     chat_completion,
     list_available_models,
 )
+from assistant_app.services.music_gateway import (
+    MusicChannelUnavailableError,
+    create_music_job,
+    music_job_payload,
+    run_music_job,
+)
 from assistant_app.services.video_gateway import (
     VideoChannelUnavailableError,
     create_video_job,
@@ -205,6 +211,7 @@ async def chat(
         )
         files: list[dict[str, object]] = []
         video_jobs: list[dict[str, object]] = []
+        music_jobs: list[dict[str, object]] = []
         notices: list[str] = []
         for tool_call in result.pop("tool_calls", []):
             arguments = tool_call.get("arguments", {})
@@ -233,6 +240,23 @@ async def chat(
                 )
                 video_jobs.append(video_job_payload(job))
                 notices.append("视频生成任务已提交，可在对话中查看进度。")
+            elif tool_call.get("name") == "generate_music":
+                lyrics = str(arguments.get("lyrics", "")).strip() or None
+                job = await create_music_job(
+                    request.app.state.runtime,
+                    user.id,
+                    str(arguments.get("prompt", payload.message)),
+                    lyrics,
+                    bool(arguments.get("is_instrumental", True)),
+                )
+                background_tasks.add_task(
+                    run_music_job,
+                    request.app.state.runtime,
+                    request.app.state.settings,
+                    job.id,
+                )
+                music_jobs.append(music_job_payload(job))
+                notices.append("音乐生成任务已提交，可在对话中查看进度。")
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))
         elif not result.get("content"):
@@ -264,12 +288,15 @@ async def chat(
         }
         result["files"] = files
         result["video_jobs"] = video_jobs
+        result["music_jobs"] = music_jobs
         return result
     except ModelRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ModelChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except VideoChannelUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MusicChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

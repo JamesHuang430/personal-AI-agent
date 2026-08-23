@@ -72,10 +72,15 @@ def test_speech_channel_defaults() -> None:
     assert payload.default_format == "mp3"
 
 
-def test_agent_exposes_video_speech_and_music_tools() -> None:
+def test_agent_exposes_director_video_speech_and_music_tools() -> None:
     tool_names = {tool["function"]["name"] for tool in AGENT_TOOLS}
 
-    assert {"generate_video", "generate_speech", "generate_music"}.issubset(tool_names)
+    assert {
+        "start_director_production",
+        "generate_video",
+        "generate_speech",
+        "generate_music",
+    }.issubset(tool_names)
 
 
 def test_completed_video_exposes_separate_preview_and_download_urls() -> None:

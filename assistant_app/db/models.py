@@ -269,6 +269,118 @@ class VideoJob(Base):
     )
 
 
+class DirectorProject(Base):
+    __tablename__ = "director_projects"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    premise: Mapped[str] = mapped_column(Text, nullable=False)
+    target_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
+    visual_style: Mapped[str] = mapped_column(String(100), nullable=False)
+    continuity_notes: Mapped[str | None] = mapped_column(Text)
+    continuity_bible: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    one_click: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    planned_shots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    completed_shots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="queued", server_default=text("'queued'")
+    )
+    current_stage: Mapped[str | None] = mapped_column(String(32))
+    progress: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    final_summary: Mapped[str | None] = mapped_column(Text)
+    preview_video_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
+    )
+    final_video_path: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DirectorAgentRun(Base):
+    __tablename__ = "director_agent_runs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_key", name="uq_director_project_agent"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("director_projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    agent_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    decision_summary: Mapped[str | None] = mapped_column(Text)
+    deliverable: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DirectorShot(Base):
+    __tablename__ = "director_shots"
+    __table_args__ = (
+        UniqueConstraint("project_id", "sequence", name="uq_director_project_shot"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("director_projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    seconds: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    video_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
+    )
+    continuity_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class MusicJob(Base):
     __tablename__ = "music_jobs"
 

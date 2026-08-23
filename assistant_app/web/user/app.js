@@ -13,6 +13,10 @@ let modelsLoading = false;
 let sessionNeedsOrganization = false;
 let organizingSession = false;
 let videoGalleryTimer = null;
+let activeChatController = null;
+let activeDirectorProject = null;
+let directorProjectTimer = null;
+let directorOneClickMode = false;
 const customModelValue = '__custom__';
 const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token');
 const initialWelcomeMarkup = $('#messages').innerHTML;
@@ -94,6 +98,7 @@ function showApp(user) {
   loadAgentRouting();
   loadConversations();
   loadVideoGallery();
+  loadDirectorProjects();
 }
 
 async function loadConversations() {
@@ -554,7 +559,8 @@ function renderArtifacts(message, result) {
   const jobs = result.video_jobs || [];
   const musicJobs = result.music_jobs || [];
   const speechJobs = result.speech_jobs || [];
-  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length) return;
+  const directorProjects = result.director_projects || [];
+  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length && !directorProjects.length) return;
   const list = document.createElement('div');
   list.className = 'artifact-list';
   for (const file of files) {
@@ -586,6 +592,17 @@ function renderArtifacts(message, result) {
     card.querySelector('a').addEventListener('click', (event) => { event.preventDefault(); pollSpeechJob(job.id, card); });
     list.appendChild(card);
     window.setTimeout(() => pollSpeechJob(job.id, card), 3000);
+  }
+  for (const project of directorProjects) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card director-artifact';
+    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>1 位总导演 + 8 位专业 Agent · ${escapeHtml(project.aspect_ratio)} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
+    card.querySelector('a').addEventListener('click', (event) => {
+      event.preventDefault();
+      switchWorkspace('studio');
+      loadDirectorProject(project.id);
+    });
+    list.appendChild(card);
   }
   message.querySelector('.message-bubble').appendChild(list);
 }
@@ -659,6 +676,7 @@ async function pollVideoJob(jobId, card) {
 }
 
 async function sendMessage(text) {
+  if (activeChatController) return;
   const content = text.trim();
   if (!content) return;
   const selection = $('#model-select').value;
@@ -673,12 +691,15 @@ async function sendMessage(text) {
   addMessage('user', content);
   conversation.push({ role: 'user', content });
   $('#chat-input').value = '';
-  $('#send-btn').disabled = true;
+  const controller = new AbortController();
+  activeChatController = controller;
+  setChatGenerating(true);
   const pending = addMessage('assistant', '正在思考…');
   try {
     const result = await api('/chat', {
       method: 'POST',
       body: JSON.stringify({ model: selectedModel, message: content, conversation_id: currentConversationId }),
+      signal: controller.signal,
     });
     pending.remove();
     const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}`);
@@ -694,21 +715,48 @@ async function sendMessage(text) {
       : '本轮内容已记录；结束会话后将自动提炼并同步到双重知识库';
     loadConversations();
   } catch (error) {
-    pending.remove();
-    addMessage('assistant', `暂时无法回答：${error.message}`);
+    if (error.name === 'AbortError') {
+      pending.querySelector('.message-bubble').textContent = '已停止生成。你的提问仍保存在最近对话中，可以稍后重新发送。';
+      sessionNeedsOrganization = true;
+      $('#session-memory-status').textContent = '本轮回复已停止；已发送的内容仍会保存在会话中';
+      loadConversations();
+      notify('已停止当前回复');
+    } else {
+      pending.remove();
+      addMessage('assistant', `暂时无法回答：${error.message}`);
+    }
   } finally {
-    $('#send-btn').disabled = false;
+    if (activeChatController === controller) activeChatController = null;
+    setChatGenerating(false);
     $('#chat-input').focus();
   }
 }
 
+function setChatGenerating(generating) {
+  const button = $('#send-btn');
+  button.classList.toggle('stopping', generating);
+  button.textContent = generating ? '■' : '↑';
+  button.setAttribute('aria-label', generating ? '停止生成' : '发送');
+  button.title = generating ? '停止生成' : '发送';
+}
+
+function stopActiveChat() {
+  if (!activeChatController) return;
+  activeChatController.abort();
+}
+
 $('#chat-form').addEventListener('submit', (event) => {
   event.preventDefault();
+  if (activeChatController) {
+    stopActiveChat();
+    return;
+  }
   sendMessage($('#chat-input').value);
 });
 $('#chat-input').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
+    if (activeChatController) return;
     $('#chat-form').requestSubmit();
   }
 });
@@ -851,7 +899,153 @@ function switchWorkspace(mode) {
   });
   setSidebarOpen(false);
   window.localStorage.setItem('assistant-workspace', mode);
-  if (isStudio && currentUser) loadVideoGallery();
+  if (isStudio && currentUser) {
+    loadVideoGallery();
+    loadDirectorProjects();
+  }
+}
+
+function directorStatusLabel(status, oneClick = false) {
+  return { queued: '准备派单', processing: 'Agent 制作中', completed: oneClick ? '一键成片完成' : '预制作完成', failed: '制作失败' }[status] || status;
+}
+
+function directorAgentStatusLabel(status) {
+  return { pending: '等待上游', processing: '正在工作', completed: '已通过', failed: '需要处理' }[status] || status;
+}
+
+async function loadDirectorProjects() {
+  if (!currentUser) return;
+  try {
+    const projects = await api('/director/projects');
+    if (!projects.length) return;
+    if (!activeDirectorProject || !projects.some((item) => item.id === activeDirectorProject.id)) {
+      renderDirectorProject(projects[0]);
+    }
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function loadDirectorProject(projectId) {
+  window.clearTimeout(directorProjectTimer);
+  try {
+    const project = await api(`/director/projects/${projectId}`);
+    renderDirectorProject(project);
+    if (['queued', 'processing'].includes(project.status)) {
+      directorProjectTimer = window.setTimeout(() => loadDirectorProject(project.id), 3500);
+    } else if (project.preview_video) {
+      loadVideoGallery();
+    }
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderDirectorProject(project) {
+  activeDirectorProject = project;
+  $('#production-kicker').innerHTML = `<span class="live-dot"></span> DIRECTOR PROJECT · ${escapeHtml(project.id.slice(0, 8).toUpperCase())}`;
+  $('#production-title').textContent = project.title;
+  const modeLabel = project.one_click ? '一键成片' : '逐镜制作';
+  const shotProgress = project.planned_shots ? ` · ${project.completed_shots}/${project.planned_shots} 镜` : '';
+  $('#production-meta').textContent = `${project.visual_style} · ${project.aspect_ratio} · ${modeLabel} · 目标 ${project.target_seconds} 秒${shotProgress}`;
+  $('#director-working-badge').textContent = directorStatusLabel(project.status, project.one_click);
+  $('.director-progress strong').textContent = `${project.progress}%`;
+  $('.director-progress i').style.width = `${project.progress}%`;
+
+  const directorRun = project.agents.find((run) => run.agent === 'director');
+  const activeRun = project.agents.find((run) => run.agent === project.current_stage);
+  $('#director-heading').textContent = project.status === 'completed'
+    ? (project.one_click ? '总导演已完成全片生成与合片交付' : '总导演已完成预制作与首镜交付')
+    : project.status === 'failed'
+      ? '导演项目暂停，需要处理失败任务'
+      : `${activeRun?.agent_name || '总导演 Agent'}正在处理当前交付物`;
+  $('#director-summary').textContent = project.error_message
+    || project.final_summary
+    || directorRun?.decision_summary
+    || '总导演正在建立创作基线，并依次派发给 8 位专业 Agent。页面只展示可审计的判断摘要，不暴露隐藏思维链。';
+
+  document.querySelectorAll('[data-stage]').forEach((button) => {
+    const run = project.agents.find((item) => item.agent === button.dataset.stage);
+    button.classList.toggle('done', run?.status === 'completed');
+    button.classList.toggle('active', run?.status === 'processing' || run?.status === 'failed');
+    button.setAttribute('aria-pressed', String(run?.agent === project.current_stage));
+    if (run) button.querySelector('em').textContent = directorAgentStatusLabel(run.status);
+  });
+
+  const sidebarProject = document.querySelector('.project-item.active');
+  if (sidebarProject) {
+    sidebarProject.querySelector('strong').textContent = project.title;
+    sidebarProject.querySelector('small').textContent = `${directorStatusLabel(project.status, project.one_click)} · ${project.progress}%`;
+  }
+
+  renderContinuityBible(project);
+  renderDirectorShots(project);
+  if (activeRun && activeRun.agent !== 'director') renderProductionStage(activeRun.agent);
+  window.clearTimeout(directorProjectTimer);
+  if (['queued', 'processing'].includes(project.status)) {
+    directorProjectTimer = window.setTimeout(() => loadDirectorProject(project.id), 3500);
+  }
+}
+
+function renderContinuityBible(project) {
+  const bible = project.continuity_bible || {};
+  const characters = Array.isArray(bible.characters) ? bible.characters : [];
+  const relationships = Array.isArray(bible.relationships) ? bible.relationships : [];
+  const references = characters.filter((character) => character.reference_image_url).length;
+  const score = characters.length ? Math.min(96, 80 + Math.round((references / characters.length) * 16)) : 0;
+  $('#continuity-score-value').textContent = characters.length ? String(score) : '—';
+  $('#continuity-score-label').textContent = characters.length
+    ? (references === characters.length ? '定妆参考已登记 · 等待兼容模型硬锁' : '文字连续性已锁定 · 定妆参考待补')
+    : '等待连续性建档';
+  $('#continuity-score-bar').style.width = `${score}%`;
+  const assets = $('#continuity-assets');
+  if (characters.length) {
+    assets.innerHTML = characters.map((character, index) => {
+      const lock = character.reference_image_url ? 'REF READY' : 'TEXT';
+      const voice = character.voice_id || character.voice_profile || '声线待锁';
+      return `<button type="button"><span class="asset-thumb person-${index % 2 ? 'two' : 'one'}">${escapeHtml(String(character.name || '角').slice(0, 1))}</span><span><strong>${escapeHtml(character.name || '未命名角色')} · ${escapeHtml(character.role || '角色')}</strong><small>${escapeHtml(character.appearance || '外貌待完善')} · ${escapeHtml(character.wardrobe || '服装待完善')} · ${escapeHtml(voice)}</small></span><em>${lock}</em></button>`;
+    }).join('');
+  } else {
+    assets.innerHTML = '<button type="button"><span class="asset-thumb person-one">角</span><span><strong>等待资产 Agent 建档</strong><small>外貌 / 服装 / 声线 / 定妆照</small></span><em>WAIT</em></button>';
+  }
+  const relationPanel = $('#continuity-relationships');
+  relationPanel.innerHTML = `<h3>人物关系 · ${characters.length ? '文字连续性已锁定' : '等待建档'}</h3>${relationships.length
+    ? relationships.map((item, index) => `<p><span>${String(index + 1).padStart(2, '0')}</span>${escapeHtml(item.source || '')} → ${escapeHtml(item.target || '')}：${escapeHtml(item.relation || '待定义')}</p>`).join('')
+    : '<p><span>—</span>项目启动后自动同步主角、配角和人物关系</p>'}`;
+}
+
+function renderDirectorShots(project) {
+  if (!project.shots?.length) return;
+  $('#director-shot-strip').innerHTML = project.shots.map((shot) => `
+    <button class="shot-card ${shot.status === 'completed' ? 'approved' : shot.status === 'processing' ? 'selected' : ''}" type="button" data-video-job="${escapeHtml(shot.video?.id || '')}">
+      <div class="shot-frame frame-wide"><span>${shot.sequence}</span><i></i></div>
+      <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}</small>
+    </button>`).join('');
+  $('#shot-heading').nextElementSibling.textContent = `${project.completed_shots} / ${project.planned_shots} 镜已生成`;
+}
+
+function showDirectorStart(oneClick = false) {
+  directorOneClickMode = oneClick;
+  const title = $('#director-start-dialog h2');
+  title.textContent = oneClick ? '一键成片' : '开始制作电影';
+  $('#director-start-intro').textContent = oneClick
+    ? '总导演将调度 8 位专业 Agent，自动完成连续性建档、逐镜生成和最终合片。'
+    : '总导演会调度 8 位专业 Agent 完成预制作，并生成首个真实预览镜头供你确认。';
+  updateDirectorModeSummary();
+  $('#director-start-dialog').showModal();
+  window.setTimeout(() => $('#director-premise').focus(), 80);
+}
+
+function updateDirectorModeSummary() {
+  const seconds = Number($('#director-duration').value);
+  const estimatedShots = Math.ceil(seconds / 12);
+  const panel = $('#director-start-boundary');
+  panel.classList.toggle('one-click', directorOneClickMode);
+  panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
+  panel.querySelector('span').textContent = directorOneClickMode
+    ? `预计调用视频模型生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。定妆照仅在兼容主体参考模型时可硬锁；当前 H3 使用连续性圣经约束外貌、服装和声线，仍需终审 Agent 检查漂移。`
+    : '完成 1 位总导演和 8 位专业 Agent 的预制作，只生成第一个 4 秒预览镜头；确认连续性后再继续，额度更可控。';
+  $('#director-start-submit').textContent = directorOneClickMode ? `确认并生成约 ${estimatedShots} 个镜头` : '启动 1 位总导演 + 8 位 Agent';
 }
 
 function videoStatusLabel(status) {
@@ -914,6 +1108,13 @@ function renderStudioVideo(job) {
   return card;
 }
 
+function renderDirectorMovie(project) {
+  const card = document.createElement('article');
+  card.className = 'video-result-card completed director-final-movie';
+  card.innerHTML = `<div class="video-result-media"><video controls playsinline preload="metadata" src="${escapeHtml(project.final_video.preview_url)}" aria-label="一键成片：${escapeHtml(project.title)}"></video></div><div class="video-result-detail"><div class="video-result-heading"><strong>一键成片 · ${escapeHtml(project.title)}</strong><em>已合片</em></div><small>${project.target_seconds} 秒 · ${escapeHtml(project.aspect_ratio)} · ${project.completed_shots} 个镜头</small><p>${escapeHtml(project.final_summary || '总导演与 8 位专业 Agent 已完成制作。')}</p><a href="${escapeHtml(project.final_video.download_url)}">下载完整 MP4 ↓</a></div>`;
+  return card;
+}
+
 async function loadVideoGallery() {
   if (!currentUser) return;
   window.clearTimeout(videoGalleryTimer);
@@ -923,18 +1124,25 @@ async function loadVideoGallery() {
   refresh.disabled = true;
   try {
     const jobs = await api('/videos');
+    let projects = [];
+    try {
+      projects = await api('/director/projects');
+    } catch (_error) {
+      // Individual generated clips stay playable if the director project list is unavailable.
+    }
+    const finalMovies = projects.filter((project) => project.final_video);
     list.replaceChildren();
-    if (!jobs.length) {
+    if (!jobs.length && !finalMovies.length) {
       list.innerHTML = '<div class="video-gallery-empty"><span>▶</span><strong>还没有真实成片</strong><small>视频任务完成后会自动出现在这里</small></div>';
       summary.textContent = '生成中的视频会自动刷新，完成后可直接播放和下载';
       return;
     }
 
     const visibleJobs = jobs.slice(0, 12);
-    list.append(...visibleJobs.map(renderStudioVideo));
+    list.append(...finalMovies.map(renderDirectorMovie), ...visibleJobs.map(renderStudioVideo));
     const completed = jobs.filter((job) => job.status === 'completed').length;
     const active = jobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
-    summary.textContent = `${completed} 条成片${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
+    summary.textContent = `${finalMovies.length} 部合片 · ${completed} 个生成片段${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
     if (active) videoGalleryTimer = window.setTimeout(loadVideoGallery, 5000);
   } catch (error) {
     list.innerHTML = `<div class="video-gallery-empty failed"><span>!</span><strong>成片记录加载失败</strong><small>${escapeHtml(error.message)}</small></div>`;
@@ -945,6 +1153,40 @@ async function loadVideoGallery() {
 }
 
 function renderProductionStage(key) {
+  const liveRun = activeDirectorProject?.agents.find((run) => run.agent === key);
+  if (liveRun) {
+    const fallback = productionStages[key];
+    $('#stage-avatar').textContent = fallback?.avatar || '审';
+    $('#stage-role').textContent = `${liveRun.agent_name} · ${directorAgentStatusLabel(liveRun.status)}`;
+    $('#stage-status').textContent = directorAgentStatusLabel(liveRun.status);
+    $('#stage-title').textContent = liveRun.status === 'pending'
+      ? '等待上游 Agent 完成交付'
+      : `${liveRun.agent_name}的可审计判断`;
+    $('#stage-summary').textContent = liveRun.decision_summary
+      || liveRun.error_message
+      || 'Agent 尚未产出判断摘要。';
+    $('#stage-evidence').replaceChildren(
+      ...[
+        `✓ 动态匹配模型：${liveRun.model}`,
+        '✓ 仅展示专业判断摘要，不展示隐藏思维链',
+        `◌ 当前状态：${directorAgentStatusLabel(liveRun.status)}`,
+      ].map((item) => {
+        const span = document.createElement('span');
+        const icon = document.createElement('i');
+        icon.textContent = item.slice(0, 1);
+        span.append(icon, document.createTextNode(` ${item.slice(2)}`));
+        return span;
+      }),
+    );
+    $('#stage-deliverable').querySelector('strong').textContent = `${liveRun.agent_name} · 当前交付物`;
+    $('#stage-deliverable').querySelector('small').textContent = liveRun.deliverable
+      ? liveRun.deliverable.slice(0, 260)
+      : '交付物生成后会自动同步到这里';
+    document.querySelectorAll('[data-stage]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.stage === key));
+    });
+    return;
+  }
   const stage = productionStages[key];
   if (!stage) return;
   $('#stage-avatar').textContent = stage.avatar;
@@ -1067,10 +1309,48 @@ $('#approve-stage').addEventListener('click', async () => {
 });
 $('#request-revision').addEventListener('click', () => notify('已创建修改意见，负责 Agent 将保留当前版本并生成新方案'));
 $('#view-deliverable').addEventListener('click', () => $('#shot-heading').scrollIntoView({ behavior: 'smooth', block: 'start' }));
-$('#new-project').addEventListener('click', () => notify('新项目向导：将从一句故事创意开始'));
-$('#project-settings').addEventListener('click', () => notify('制作设定包含画幅、时长、风格、预算与发布平台'));
+$('#new-project').addEventListener('click', () => showDirectorStart(false));
+$('#start-director-project').addEventListener('click', () => showDirectorStart(false));
+$('#one-click-movie').addEventListener('click', () => showDirectorStart(true));
+$('#project-settings').addEventListener('click', () => showDirectorStart(false));
 $('#show-all-shots').addEventListener('click', () => notify('全片共 24 镜，当前展示场次 07 的关键镜头'));
 $('#refresh-video-gallery').addEventListener('click', loadVideoGallery);
+$('#director-start-close').addEventListener('click', () => $('#director-start-dialog').close());
+$('#director-start-cancel').addEventListener('click', () => $('#director-start-dialog').close());
+$('#director-duration').addEventListener('change', updateDirectorModeSummary);
+$('#director-start-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const seconds = Number($('#director-duration').value);
+  const estimatedShots = Math.ceil(seconds / 12);
+  if (directorOneClickMode && !window.confirm(`一键成片预计生成约 ${estimatedShots} 个视频片段，会消耗 MiniMax 额度并可能需要较长时间。确认继续吗？`)) return;
+  const button = $('#director-start-submit');
+  button.disabled = true;
+  button.textContent = '正在匹配 Agent 模型…';
+  try {
+    const project = await api('/director/projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        premise: $('#director-premise').value.trim(),
+        target_seconds: Number($('#director-duration').value),
+        aspect_ratio: $('#director-ratio').value,
+        visual_style: $('#director-style').value,
+        continuity_notes: $('#director-continuity-notes').value.trim(),
+        one_click: directorOneClickMode,
+      }),
+    });
+    $('#director-start-dialog').close();
+    renderDirectorProject(project);
+    switchWorkspace('studio');
+    notify(directorOneClickMode
+      ? `一键成片已启动：9 位 Agent 将协作生成约 ${estimatedShots} 个镜头并自动合片`
+      : '导演项目已启动：总导演开始派发 8 道专业任务');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    button.disabled = false;
+    updateDirectorModeSummary();
+  }
+});
 $('#studio-guide').addEventListener('click', showStudioGuide);
 $('#studio-guide-close').addEventListener('click', () => $('#studio-guide-dialog').close());
 $('#studio-guide-done').addEventListener('click', () => $('#studio-guide-dialog').close());

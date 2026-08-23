@@ -18,6 +18,11 @@ from assistant_app.services.conversations import (
     prepare_conversation,
     record_assistant_message,
 )
+from assistant_app.services.director import (
+    create_director_project,
+    project_payload,
+    run_director_project,
+)
 from assistant_app.services.generated_files import create_generated_file, file_payload
 from assistant_app.services.memory import (
     learn_from_exchange,
@@ -239,6 +244,7 @@ async def chat(
         video_jobs: list[dict[str, object]] = []
         music_jobs: list[dict[str, object]] = []
         speech_jobs: list[dict[str, object]] = []
+        director_projects: list[dict[str, object]] = []
         notices: list[str] = []
         for tool_call in result.pop("tool_calls", []):
             arguments = tool_call.get("arguments", {})
@@ -301,6 +307,38 @@ async def chat(
                 )
                 speech_jobs.append(speech_job_payload(job))
                 notices.append("语音配音任务已提交，可在对话中查看进度。")
+            elif tool_call.get("name") == "start_director_production":
+                target_seconds = int(arguments.get("target_seconds", 60))
+                if target_seconds not in {30, 60, 180, 300}:
+                    target_seconds = 60
+                aspect_ratio = str(arguments.get("aspect_ratio", "9:16"))
+                if aspect_ratio not in {"9:16", "16:9"}:
+                    aspect_ratio = "9:16"
+                project = await create_director_project(
+                    request.app.state.runtime,
+                    request.app.state.settings,
+                    user.id,
+                    str(arguments.get("premise", payload.message)),
+                    target_seconds,
+                    aspect_ratio,
+                    str(arguments.get("visual_style", "电影感写实")),
+                    str(arguments.get("continuity_notes", "")),
+                    bool(arguments.get("one_click", False)),
+                )
+                background_tasks.add_task(
+                    run_director_project,
+                    request.app.state.runtime,
+                    request.app.state.settings,
+                    project.id,
+                )
+                director_projects.append(
+                    await project_payload(request.app.state.runtime, project)
+                )
+                notices.append(
+                    "一键成片项目已启动：9 位 Agent 将逐镜生成并自动合片。"
+                    if bool(arguments.get("one_click", False))
+                    else "导演项目已启动：总导演和 8 位专业 Agent 将依次把关。"
+                )
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))
         elif not result.get("content"):
@@ -334,6 +372,7 @@ async def chat(
         result["video_jobs"] = video_jobs
         result["music_jobs"] = music_jobs
         result["speech_jobs"] = speech_jobs
+        result["director_projects"] = director_projects
         return result
     except ModelRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc

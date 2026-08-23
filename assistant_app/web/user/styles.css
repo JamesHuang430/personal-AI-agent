@@ -130,6 +130,7 @@ button { cursor: pointer; }
 .composer textarea { max-height: 150px; resize: none; border: 0; outline: 0; padding: 8px 0; color: var(--ink); background: transparent; }
 .composer button { width: 42px; height: 42px; border: 0; border-radius: 13px; color: white; background: var(--primary); font-size: 22px; }
 .composer button:disabled { background: #b9bfcc; cursor: wait; }
+.composer button.stopping { color: white; background: #d9515d; font-size: 14px; box-shadow: 0 0 0 5px rgba(217,81,93,.1); }
 .ai-note { margin: 7px 0 0; color: #a3aaba; text-align: center; font-size: 10px; }
 .modal { width: min(760px, calc(100% - 30px)); border: 0; border-radius: 22px; padding: 26px; box-shadow: var(--shadow); }
 .modal::backdrop { background: rgba(19,24,45,.42); backdrop-filter: blur(4px); }
@@ -137,6 +138,23 @@ button { cursor: pointer; }
 .modal-header h2 { margin: 0; font-size: 28px; }
 .close-btn { border: 0; color: #7d8798; background: transparent; font-size: 26px; }
 .studio-guide-modal { width: min(920px, calc(100% - 30px)); max-height: calc(100dvh - 32px); overflow-y: auto; color: #2e374b; }
+.director-start-modal { width: min(760px, calc(100% - 30px)); max-height: calc(100dvh - 32px); overflow-y: auto; color: #2e374b; }
+.director-start-intro { margin: 8px 0 20px; color: #717b90; line-height: 1.7; }
+.director-start-modal form > label, .director-form-grid label { display: grid; gap: 7px; color: #515d73; font-size: 12px; font-weight: 700; }
+.director-start-modal textarea, .director-start-modal select { width: 100%; border: 1px solid #dfe3ed; border-radius: 12px; outline: 0; padding: 12px 13px; color: #293349; background: #f9fafe; }
+.director-start-modal textarea { resize: vertical; line-height: 1.7; }
+.director-start-modal .continuity-input { margin-top: 14px; }
+.continuity-input small { color: #8891a3; font-size: 10px; font-weight: 500; line-height: 1.6; }
+.director-start-modal textarea:focus, .director-start-modal select:focus { border-color: #8d7af0; box-shadow: 0 0 0 3px rgba(102,85,232,.1); background: white; }
+.director-form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 15px; }
+.director-start-boundary { display: grid; gap: 3px; margin-top: 17px; padding: 12px 13px; border: 1px solid #e5ddbc; border-radius: 11px; color: #7c704b; background: #fffbef; }
+.director-start-boundary strong { font-size: 11px; }
+.director-start-boundary span { font-size: 10px; line-height: 1.65; }
+.director-start-boundary.one-click { border-color: #dbcdf8; color: #66518e; background: #f7f3ff; }
+.director-start-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.director-start-actions .ghost-btn { color: #657087; border-color: #dfe3eb; background: white; }
+.director-start-actions .studio-primary { padding-right: 18px; padding-left: 18px; }
+.director-start-actions button:disabled { opacity: .55; cursor: wait; }
 .guide-intro { margin: 10px 0 18px; color: #687286; font-size: 13px; line-height: 1.7; }
 .video-readiness { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-bottom: 18px; padding: 13px; border: 1px solid #dfe3ec; border-radius: 14px; background: #f7f8fb; }
 .readiness-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #687286; background: #e8eaf0; font-weight: 800; }
@@ -545,7 +563,9 @@ button { cursor: pointer; }
   .production-header h1 span { font-size: 12px; }
   .production-header p { font-size: 9px; }
   .production-actions { position: sticky; z-index: 8; bottom: 8px; order: 3; gap: 7px; padding: 5px; border: 1px solid #2f303a; border-radius: 12px; background: rgba(23,24,32,.92); backdrop-filter: blur(12px); }
-  .production-actions button { min-height: 42px; }
+  .production-actions { flex-wrap: wrap; }
+  .production-actions button { flex: 1 0 calc(33.333% - 7px); min-height: 42px; padding-right: 8px; padding-left: 8px; }
+  #start-director-project, #one-click-movie { flex-basis: calc(50% - 7px); }
   .director-brief { grid-template-columns: 38px minmax(0, 1fr); gap: 10px; margin-bottom: 18px; padding: 13px; }
   .director-avatar { width: 36px; height: 36px; border-radius: 10px; font-size: 15px; }
   .director-copy h2 { font-size: 12px; }
@@ -589,6 +609,10 @@ button { cursor: pointer; }
   .video-result-card { flex: 0 0 min(82vw, 310px); scroll-snap-align: start; }
   .video-result-media { max-height: 430px; }
   .video-gallery-empty { flex: 0 0 calc(100% - 12px); min-height: 160px; }
+  .director-form-grid { grid-template-columns: 1fr; gap: 10px; }
+  .director-start-actions { position: sticky; bottom: -8px; padding: 8px 0; background: white; }
+  .director-start-actions button { min-height: 44px; }
+  .director-start-actions .studio-primary { flex: 1; }
 
   .modal { max-height: calc(100dvh - 20px); padding: 18px 14px; overflow-y: auto; border-radius: 18px; }
   .modal-header h2 { font-size: 22px; }

@@ -31,6 +31,11 @@ def test_root_serves_user_interface() -> None:
     assert 'id="model-custom"' in response.text
     assert 'id="video-gallery-list"' in response.text
     assert 'id="refresh-video-gallery"' in response.text
+    assert 'id="start-director-project"' in response.text
+    assert 'id="one-click-movie"' in response.text
+    assert 'id="director-start-form"' in response.text
+    assert 'id="director-continuity-notes"' in response.text
+    assert 'aria-label="停止生成"' not in response.text
 
 
 def test_chat_requires_user_selected_model() -> None:

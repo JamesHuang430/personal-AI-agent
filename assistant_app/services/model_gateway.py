@@ -25,6 +25,47 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "start_director_production",
+            "description": (
+                "用户明确要求启动导演工作室、调用总导演和各专业 Agent、制作短剧或电影时，"
+                "创建一个持久化的多 Agent 导演项目。普通模式完成预制作并生成首个预览镜头；"
+                "用户明确说一键成片时才启用批量视频生成与自动合片。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "premise": {"type": "string", "description": "故事创意、人物与核心冲突"},
+                    "target_seconds": {
+                        "type": "integer",
+                        "enum": [30, 60, 180, 300],
+                        "description": "目标总时长，默认 60 秒",
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["9:16", "16:9"],
+                        "description": "竖屏或横屏画幅",
+                    },
+                    "visual_style": {
+                        "type": "string",
+                        "description": "视觉风格，默认电影感写实",
+                    },
+                    "continuity_notes": {
+                        "type": "string",
+                        "description": "角色关系、外貌、服装、voice_id、定妆照 URL 等锁定信息",
+                    },
+                    "one_click": {
+                        "type": "boolean",
+                        "description": "是否直接逐镜生成并合片；只有用户明确要求一键成片时为 true",
+                    },
+                },
+                "required": ["premise"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_file",
             "description": (
                 "根据用户要求生成可下载的文本类文件。用户明确要求生成、导出或保存文件时调用。"
@@ -171,6 +212,10 @@ async def chat_completion(
                 "不知道的信息要明确说明，不要虚构机票、火车票或实时数据。"
                 "用户明确要求生成或导出文件时调用 create_file；明确要求生成视频时调用"
                 " generate_video；明确要求主题曲、配乐或背景音乐时调用 generate_music。"
+                "用户要求启动导演工作室、调用各个 Agent、制作短剧或电影时，必须调用"
+                " start_director_production，不要只写一篇故事或口头描述流程；导演项目会自行"
+                "生成首个预览镜头，此时不要再重复调用 generate_video。用户明确说‘一键成片’"
+                "时，将 one_click 设为 true；否则必须为 false，避免未经确认批量消耗视频额度。"
                 "明确要求旁白、对白、固定声线或补配音时调用 generate_speech；普通 H3 视频"
                 "优先保留原生音轨，不要重复配音。不要声称已经生成文件、视频、语音或音乐，"
                 "必须实际调用对应工具。"
@@ -211,3 +256,32 @@ async def chat_completion(
             "total_tokens": usage.total_tokens if usage else None,
         },
     }
+
+
+async def agent_text_completion(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    model_name: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> dict[str, Any]:
+    """Run one visible director-agent pass without exposing hidden chain of thought."""
+
+    async with runtime.sessions() as session:
+        channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
+    if channel is None:
+        raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
+    await _enforce_qps(runtime, channel)
+    api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
+    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=120) as client:
+        completion = await client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+    content = completion.choices[0].message.content or ""
+    if not content.strip():
+        raise ValueError("Agent 没有返回可用交付物")
+    return {"content": content.strip(), "channel": channel.name, "model": model_name}

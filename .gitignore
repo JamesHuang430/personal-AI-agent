@@ -33,3 +33,4 @@ uploads/
 generated/
 backups/
 work/
+.model-cache/*.tar.gz

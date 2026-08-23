@@ -11,10 +11,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN groupadd --system assistant \
     && useradd --system --gid assistant --home-dir /app assistant \
     && mkdir -p /data/generated \
@@ -31,9 +27,18 @@ RUN mkdir -p assistant_app \
     && python -m pip install . \
     && rm -rf assistant_app
 
+COPY .model-cache /tmp/model-cache
 RUN mkdir -p /opt/fastembed \
-    && python -c "import os,tarfile,urllib.request; archive='/tmp/bge-small-zh-v1.5.tar.gz'; urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data'); os.unlink(archive)" \
+    && python -c "import os,tarfile,urllib.request; archive='/tmp/model-cache/fast-bge-small-zh-v1.5.tar.gz'; os.path.isfile(archive) or urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data')" \
     && python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/opt/fastembed', local_files_only=True)"
+
+# Keep OS media tools after the stable Python/model layers so application-image
+# rebuilds can reuse the expensive embedding cache.
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+RUN sed -i "s#http://deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY assistant_app ./assistant_app
 COPY alembic.ini ./

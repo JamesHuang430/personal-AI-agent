@@ -268,6 +268,11 @@ async def create_director_project(
     ]
     async with runtime.sessions() as session, session.begin():
         session.add(project)
+        # The agent rows reference the project by its UUID, but no ORM
+        # relationship connects the independently constructed objects. Flush
+        # the parent explicitly so SQLAlchemy cannot batch the child inserts
+        # before the project insert on PostgreSQL.
+        await session.flush()
         session.add_all(runs)
     return project
 

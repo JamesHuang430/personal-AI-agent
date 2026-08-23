@@ -1,9 +1,40 @@
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
 from assistant_app.api.routes.director import DirectorProjectCreatePayload
+from assistant_app.core.config import Settings
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
-from assistant_app.services.director import _shot_durations, _split_agent_output
+from assistant_app.services.director import (
+    _shot_durations,
+    _split_agent_output,
+    create_director_project,
+)
+
+
+class RecordingDirectorSession:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    async def __aenter__(self) -> "RecordingDirectorSession":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    def begin(self) -> "RecordingDirectorSession":
+        return self
+
+    def add(self, _item: object) -> None:
+        self.events.append("add_project")
+
+    async def flush(self) -> None:
+        self.events.append("flush_project")
+
+    def add_all(self, items: list[object]) -> None:
+        self.events.append(f"add_runs:{len(items)}")
 
 
 def test_director_project_payload_supports_short_and_five_minute_projects() -> None:
@@ -62,3 +93,25 @@ def test_one_click_movie_plans_supported_clip_lengths() -> None:
     assert _shot_durations(30) == ["12", "12", "8"]
     assert _shot_durations(60) == ["12", "12", "12", "12", "12"]
     assert sum(map(int, _shot_durations(300))) == 300
+
+
+@pytest.mark.asyncio
+async def test_director_project_is_flushed_before_agent_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def available_models(*_args: object) -> tuple[str, list[str]]:
+        return "test", ["qwen3.7-max"]
+
+    monkeypatch.setattr("assistant_app.services.director.list_available_models", available_models)
+    session = RecordingDirectorSession()
+    runtime = SimpleNamespace(sessions=lambda: session)
+
+    project = await create_director_project(
+        runtime,
+        Settings(_env_file=None),
+        uuid4(),
+        "雨夜里寻找失踪信件的女孩",
+    )
+
+    assert project.title == "雨夜里寻找失踪信件的女孩"
+    assert session.events == ["add_project", "flush_project", "add_runs:9"]

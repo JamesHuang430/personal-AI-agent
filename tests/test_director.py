@@ -6,9 +6,12 @@ from pydantic import ValidationError
 
 from assistant_app.api.routes.director import DirectorProjectCreatePayload
 from assistant_app.core.config import Settings
+from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
+    _extract_storyboard_plan,
     _shot_durations,
+    _shot_prompt,
     _split_agent_output,
     create_director_project,
 )
@@ -115,3 +118,81 @@ async def test_director_project_is_flushed_before_agent_runs(
 
     assert project.title == "雨夜里寻找失踪信件的女孩"
     assert session.events == ["add_project", "flush_project", "add_runs:9"]
+
+
+def test_storyboard_markdown_becomes_distinct_per_shot_plan() -> None:
+    content = """
+### 镜头 01：00-12s 雾林远景
+正向提示词：小刺猬从画面左侧走入雾林，镜头缓慢下降。
+
+### 镜头 02：12-24s 灯笼出现
+正向提示词：南瓜灯从树后漂出，小刺猬停步抬头，镜头向前推进。
+
+### 镜头 03：24-36s 精灵求助
+正向提示词：萤火精灵飞到鼻尖，小刺猬伸出爪子，微距固定镜头。
+"""
+
+    plan = _extract_storyboard_plan(content, 3, "小刺猬帮助萤火精灵寻找晨露")
+
+    assert [item["title"] for item in plan] == ["雾林远景", "灯笼出现", "精灵求助"]
+    assert len({str(item["instruction"]) for item in plan}) == 3
+    assert "漂出" in str(plan[1]["instruction"])
+
+
+def test_storyboard_markdown_table_becomes_distinct_per_shot_plan() -> None:
+    content = """
+| 镜号 | 时间轴 | 景别 | 机位/视角 | 摄像机运动 | 画面内容 | 声音设计 | 转场方式 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 01 | 00-03s | ECU | 微距平视 | 慢推 | **钩子**：南瓜灯在雾气中晃动。 | 风声 | 淡入 |
+| 02 | 03-08s | MCU | 微距平视 | 右摇 | **发现**：团团拨开蕨叶并停步抬头。 | 叶片声 | 擦除 |
+| 03 | 08-15s | CU | 低角度 | 固定 | **求助**：闪闪在灯笼内指向山巅。 | 风铃声 | 硬切 |
+"""
+
+    plan = _extract_storyboard_plan(content, 3, "小刺猬帮助萤火精灵寻找晨露")
+
+    assert [item["title"] for item in plan] == ["钩子", "发现", "求助"]
+    assert len({str(item["instruction"]) for item in plan}) == 3
+    assert "团团拨开蕨叶" in str(plan[1]["instruction"])
+
+
+def test_duplicate_storyboard_entries_receive_unique_fallback_beats() -> None:
+    content = """【分镜JSON】
+[
+  {"sequence": 1, "title": "重复", "action": "主角向前走"},
+  {"sequence": 2, "title": "重复", "action": "主角向前走"},
+  {"sequence": 3, "title": "重复", "action": "主角向前走"}
+]
+"""
+
+    plan = _extract_storyboard_plan(content, 3, "一次夜间冒险")
+
+    assert len({str(item["instruction"]) for item in plan}) == 3
+    assert "一次细节互动揭示人物关系" in str(plan[1]["instruction"])
+    assert "情绪回收" in str(plan[2]["instruction"])
+
+
+def test_video_prompt_combines_unique_shot_with_shared_continuity() -> None:
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=uuid4(),
+        title="晨露",
+        premise="小刺猬帮助萤火精灵寻找晨露",
+        target_seconds=30,
+        aspect_ratio="9:16",
+        visual_style="温暖动画",
+        continuity_bible={
+            "characters": [
+                {"name": "团团", "appearance": "浅棕短刺", "wardrobe": "红围巾"}
+            ]
+        },
+    )
+    first = {"title": "进入雾林", "instruction": "团团从左侧走入雾林，远景慢降镜头"}
+    second = {"title": "发现灯笼", "instruction": "团团停步抬头，南瓜灯从树后漂出，近景慢推"}
+
+    first_prompt = _shot_prompt(project, 1, 3, "12", first)
+    second_prompt = _shot_prompt(project, 2, 3, "12", second)
+
+    assert first_prompt != second_prompt
+    assert "进入雾林" not in second_prompt
+    assert "南瓜灯从树后漂出" in second_prompt
+    assert "红围巾" in first_prompt and "红围巾" in second_prompt

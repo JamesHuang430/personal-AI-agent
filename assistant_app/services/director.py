@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -37,6 +38,34 @@ AGENT_BRIEFS = {
     "quality": "按叙事、连续性、画面、声音、技术、版权与平台合规执行终审",
 }
 
+SHOT_BEATS = (
+    "建立独特环境、时间与空间方向",
+    "主角第一次出场并展示固定外形",
+    "用标志性道具强化主角身份",
+    "展示主角原本的目标与日常行动",
+    "环境中出现第一处异常征兆",
+    "主角发现关键人物或关键物件",
+    "突发事件打断原有行动",
+    "主角犹豫并显露内在弱点",
+    "主角接受任务并明确短期目标",
+    "角色离开安全区进入新空间",
+    "第一个实体障碍迫使角色行动",
+    "主配角通过合作跨过小障碍",
+    "一次细节互动揭示人物关系",
+    "局势短暂好转并制造错误希望",
+    "重大挫折改变路径或目标",
+    "新线索揭示此前未知的真相",
+    "角色面对两难选择与时间压力",
+    "主角克服弱点并作出不可逆决定",
+    "角色为最终行动进行具体准备",
+    "逼近高潮地点并持续增加压迫感",
+    "主角与核心障碍正面交锋",
+    "角色付出代价保护重要的人或目标",
+    "关键反转让行动获得成功机会",
+    "冲突解决并清楚展示结果",
+    "用新的日常或标志物完成情绪回收",
+)
+
 
 def _project_title(premise: str) -> str:
     compact = " ".join(premise.split())
@@ -49,10 +78,10 @@ def _split_agent_output(content: str) -> tuple[str, str]:
         if marker in normalized:
             summary, deliverable = normalized.split(marker, 1)
             summary = summary.replace("【判断摘要】", "").replace("## 判断摘要", "").strip()
-            return summary[:1200], deliverable.strip()[:12_000]
+            return summary[:1200], deliverable.strip()[:64_000]
     paragraphs = [item.strip() for item in normalized.split("\n\n") if item.strip()]
     summary = paragraphs[0] if paragraphs else normalized
-    return summary[:1200], normalized[:12_000]
+    return summary[:1200], normalized[:64_000]
 
 
 def _default_continuity_bible(project: DirectorProject) -> dict[str, object]:
@@ -123,6 +152,193 @@ def _shot_phase(sequence: int, total: int) -> str:
     if position <= 0.8:
         return "进入转折与冲突高潮"
     return "完成高潮、情绪落点与结尾回收"
+
+
+def _fallback_shot_spec(sequence: int, total: int, premise: str) -> dict[str, object]:
+    beat_index = ((sequence - 1) * (len(SHOT_BEATS) - 1)) // max(total - 1, 1)
+    beat = SHOT_BEATS[beat_index]
+    phase = _shot_phase(sequence, total)
+    return {
+        "sequence": sequence,
+        "title": f"第 {sequence} 镜 · {beat}",
+        "story_beat": beat,
+        "instruction": (
+            f"全片故事背景：{premise}\n"
+            f"当前剧情阶段：{phase}\n"
+            f"本镜唯一微节拍：{beat}\n"
+            "本镜必须用一个可见的新动作和一个明确的新构图推进剧情，"
+            "不得重复上一镜的站位、动作、景别和机位。"
+        ),
+    }
+
+
+def _shot_spec_instruction(raw: dict[str, object]) -> str:
+    fields = (
+        ("叙事任务", "story_beat"),
+        ("出镜人物", "characters"),
+        ("地点", "location"),
+        ("核心动作", "action"),
+        ("景别", "shot_size"),
+        ("机位与运镜", "camera"),
+        ("光线与色彩", "lighting"),
+        ("转场衔接", "transition"),
+        ("正向提示词", "positive_prompt"),
+        ("负向提示词", "negative_prompt"),
+    )
+    lines: list[str] = []
+    explicit = str(raw.get("instruction") or "").strip()
+    if explicit:
+        lines.append(explicit)
+    for label, key in fields:
+        value = raw.get(key)
+        if isinstance(value, list):
+            value = "、".join(str(item) for item in value if str(item).strip())
+        text_value = str(value or "").strip()
+        if text_value:
+            lines.append(f"{label}：{text_value}")
+    return "\n".join(lines).strip()
+
+
+def _normalize_shot_spec(
+    raw: dict[str, object],
+    sequence: int,
+    total: int,
+    premise: str,
+) -> dict[str, object]:
+    fallback = _fallback_shot_spec(sequence, total, premise)
+    title = str(raw.get("title") or fallback["title"]).strip()
+    instruction = _shot_spec_instruction(raw)
+    if not instruction:
+        return fallback
+    return {
+        "sequence": sequence,
+        "title": title[:200],
+        "story_beat": str(raw.get("story_beat") or title).strip(),
+        "instruction": instruction[:6_000],
+    }
+
+
+def _markdown_shot_specs(content: str) -> dict[int, dict[str, object]]:
+    pattern = re.compile(
+        r"(?ms)^#{1,6}\s*镜头\s*0*(\d+)\s*[：:]?\s*(.*?)"
+        r"(?=^#{1,6}\s*镜头\s*0*\d+|\Z)"
+    )
+    specs: dict[int, dict[str, object]] = {}
+    for match in pattern.finditer(content):
+        sequence = int(match.group(1))
+        block = match.group(2).strip()
+        heading, _, body = block.partition("\n")
+        title = re.sub(r"^\d{1,3}\s*[-–—]\s*\d{1,3}s?\s*", "", heading).strip()
+        specs[sequence] = {
+            "sequence": sequence,
+            "title": title or f"第 {sequence} 镜",
+            "story_beat": title,
+            "instruction": body.strip() or heading,
+        }
+    return specs
+
+
+def _markdown_table_shot_specs(content: str) -> dict[int, dict[str, object]]:
+    specs: dict[int, dict[str, object]] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 6:
+            continue
+        sequence_match = re.fullmatch(r"0*(\d+)", cells[0])
+        if sequence_match is None:
+            continue
+        sequence = int(sequence_match.group(1))
+        visual_content = cells[5]
+        title_match = re.search(r"\*\*(.+?)\*\*", visual_content)
+        title = title_match.group(1).strip() if title_match else f"第 {sequence} 镜"
+        sound = cells[6] if len(cells) > 6 else ""
+        transition = cells[7] if len(cells) > 7 else ""
+        specs[sequence] = {
+            "sequence": sequence,
+            "title": title,
+            "story_beat": re.sub(r"\*+", "", visual_content),
+            "instruction": (
+                f"原分镜时间轴：{cells[1]}\n"
+                f"景别：{cells[2]}\n"
+                f"机位/视角：{cells[3]}\n"
+                f"摄像机运动：{cells[4]}\n"
+                f"画面内容与核心动作：{visual_content}\n"
+                f"声音设计：{sound}\n"
+                f"转场方式：{transition}"
+            ),
+        }
+    return specs
+
+
+def _extract_storyboard_plan(content: str, total: int, premise: str) -> list[dict[str, object]]:
+    raw_specs: dict[int, dict[str, object]] = {}
+    marker = "【分镜JSON】"
+    if marker in content:
+        tail = content.split(marker, 1)[1].strip().replace("```json", "").replace("```", "")
+        start = tail.find("[")
+        if start >= 0:
+            try:
+                parsed, _ = json.JSONDecoder().raw_decode(tail[start:])
+            except (json.JSONDecodeError, TypeError):
+                parsed = []
+            if isinstance(parsed, list):
+                for index, item in enumerate(parsed, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        sequence = int(item.get("sequence") or index)
+                    except (TypeError, ValueError):
+                        continue
+                    if 1 <= sequence <= total:
+                        raw_specs[sequence] = item
+    for sequence, item in _markdown_shot_specs(content).items():
+        raw_specs.setdefault(sequence, item)
+    for sequence, item in _markdown_table_shot_specs(content).items():
+        raw_specs.setdefault(sequence, item)
+
+    plan: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for sequence in range(1, total + 1):
+        spec = _normalize_shot_spec(
+            raw_specs.get(sequence, {}),
+            sequence,
+            total,
+            premise,
+        )
+        uniqueness_key = re.sub(r"\s+", "", str(spec["instruction"])).casefold()
+        if uniqueness_key in seen:
+            fallback = _fallback_shot_spec(sequence, total, premise)
+            fallback["instruction"] = (
+                f"{fallback['instruction']}\n原分镜补充：{spec['instruction']}"
+            )[:6_000]
+            spec = fallback
+            uniqueness_key = re.sub(r"\s+", "", str(spec["instruction"])).casefold()
+        seen.add(uniqueness_key)
+        plan.append(spec)
+    return plan
+
+
+def _shot_prompt(
+    project: DirectorProject,
+    sequence: int,
+    total: int,
+    seconds: str,
+    spec: dict[str, object],
+) -> str:
+    continuity = _continuity_prompt(project)
+    return (
+        f"{project.visual_style}，{project.aspect_ratio} AI 短剧，第 {sequence}/{total} 镜，"
+        f"时长 {seconds} 秒。\n"
+        f"【本镜唯一分镜方案】\n{spec['instruction']}\n"
+        "只表现本镜的叙事任务、地点、动作和机位；不得复用其他镜头的构图或动作。\n"
+        f"【全片故事背景】{project.premise}\n"
+        f"【跨镜连续性圣经】{continuity}\n"
+        "人物脸型、五官、发型、年龄感、服装配色、标志物、声线及人物关系必须固定；"
+        "不得擅自换装、换脸或新增人物。动作自然，镜头衔接清楚，无字幕、无文字、无水印。"
+    )[:8_000]
 
 
 def agent_run_payload(run: DirectorAgentRun) -> dict[str, object]:
@@ -394,6 +610,22 @@ async def _update_shot(
         shot.updated_at = datetime.now(UTC)
 
 
+async def _load_storyboard_plan(
+    runtime: RuntimeDependencies,
+    project: DirectorProject,
+    total: int,
+) -> list[dict[str, object]]:
+    async with runtime.sessions() as session:
+        deliverable = await session.scalar(
+            select(DirectorAgentRun.deliverable).where(
+                DirectorAgentRun.project_id == project.id,
+                DirectorAgentRun.agent_key == "storyboard",
+                DirectorAgentRun.status == "completed",
+            )
+        )
+    return _extract_storyboard_plan(str(deliverable or ""), total, project.premise)
+
+
 async def _create_and_run_shot(
     runtime: RuntimeDependencies,
     settings: Settings,
@@ -401,23 +633,17 @@ async def _create_and_run_shot(
     sequence: int,
     total: int,
     seconds: str,
+    spec: dict[str, object],
 ) -> tuple[DirectorShot, VideoJob]:
     continuity = project.continuity_bible or _default_continuity_bible(project)
-    phase = _shot_phase(sequence, total)
-    prompt = (
-        f"{project.visual_style}，{project.aspect_ratio} AI 短剧，第 {sequence}/{total} 镜。"
-        f"故事：{project.premise}。本镜职责：{phase}。"
-        f"连续性圣经：{json.dumps(continuity, ensure_ascii=False)}。"
-        "主角、配角的脸型、五官、发型、年龄感、服装配色、标志物和人物关系必须与圣经一致；"
-        "不要擅自换装、换脸、改变声线或新增人物。动作自然，镜头衔接清楚，无字幕、无文字、无水印。"
-    )
+    prompt = _shot_prompt(project, sequence, total, seconds, spec)
     shot = DirectorShot(
         id=uuid4(),
         project_id=project.id,
         user_id=project.user_id,
         sequence=sequence,
-        title=f"第 {sequence} 镜 · {phase}",
-        prompt=prompt[:8_000],
+        title=str(spec["title"])[:200],
+        prompt=prompt,
         seconds=seconds,
         status="processing",
         continuity_snapshot=continuity,
@@ -505,6 +731,16 @@ async def _execute_agent_run(
             "角色必须覆盖故事中的主角、配角和关键人物；"
             "若用户给了定妆照 URL 或 voice_id，原样登记。"
         )
+    if run.agent_key == "storyboard":
+        durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+        system_prompt += (
+            f"你必须规划正好 {len(durations)} 个可独立生成的视频镜头，"
+            f"对应时长依次为 {durations} 秒。每一镜的叙事任务、地点、核心动作、景别和运镜"
+            "必须实质不同，同时保持角色连续性。交付物末尾必须输出【分镜JSON】，"
+            "后接严格合法 JSON 数组；每项必须包含 sequence、title、story_beat、characters、"
+            "location、action、shot_size、camera、lighting、transition、positive_prompt、"
+            "negative_prompt。不得用“同上”“延续上一镜”等方式省略字段。"
+        )
     user_prompt = (
         f"项目：{project.title}\n故事创意：{project.premise}\n目标时长："
         f"{project.target_seconds} 秒\n画幅：{project.aspect_ratio}\n视觉风格："
@@ -569,6 +805,7 @@ async def run_director_project(
 
         if project.one_click:
             durations = _shot_durations(project.target_seconds)
+            shot_plan = await _load_storyboard_plan(runtime, project, len(durations))
             await _update_project(
                 runtime,
                 project_id,
@@ -585,6 +822,7 @@ async def run_director_project(
                     sequence,
                     len(durations),
                     seconds,
+                    shot_plan[sequence - 1],
                 )
                 completed_jobs.append(completed_job)
                 await _update_project(
@@ -596,6 +834,7 @@ async def run_director_project(
                 )
         else:
             completed_jobs = []
+            shot_plan = await _load_storyboard_plan(runtime, project, 1)
             await _update_project(runtime, project_id, current_stage="preview", progress=68)
             _shot, completed_preview = await _create_and_run_shot(
                 runtime,
@@ -604,6 +843,7 @@ async def run_director_project(
                 1,
                 1,
                 "4",
+                shot_plan[0],
             )
             await _update_project(
                 runtime,

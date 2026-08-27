@@ -142,7 +142,9 @@ async def _search_searxng(
     params: dict[str, str | int] = {
         "q": query,
         "format": "json",
-        "categories": "news" if topic == "news" else "general",
+        # China-hosted dedicated news engines are often sparse or noisy. The
+        # general engines return better current coverage when time_range is set.
+        "categories": "general",
         "language": "zh-CN",
         "safesearch": 1,
     }

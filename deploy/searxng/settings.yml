@@ -3,9 +3,7 @@ use_default_settings:
     keep_only:
       - baidu
       - bing
-      - bing news
       - sogou
-      - sina
 
 general:
   debug: false
@@ -38,12 +36,6 @@ engines:
   - name: bing
     disabled: false
     base_url: https://cn.bing.com
-  - name: bing news
-    disabled: false
-    base_url: https://cn.bing.com
   - name: sogou
     disabled: false
     weight: 1.2
-  - name: sina
-    disabled: false
-    inactive: false

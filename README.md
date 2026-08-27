@@ -70,7 +70,7 @@ pgvector 与 Apache AGE 已包含在 PostgreSQL 服务中，无需单独启动�
 暂时不可用时，会话、长期记忆和图谱仍会正常保存，并自动使用关键词回退检索。
 
 联网检索默认启用并在 Compose 内部启动 `SearXNG`，不需要 API Key，也不向公网暴露
-搜索服务端口。默认启用百度、搜狗、Bing 中国站及新闻搜索，Agent 遇到最新数据、新闻、
+搜索服务端口。默认启用百度、搜狗和 Bing 中国站，Agent 遇到最新数据、新闻、
 价格、政策或用户明确要求搜索时会自动调用；可通过
 `ASSISTANT_WEB_SEARCH_ENABLED=false` 关闭，也可用 `ASSISTANT_WEB_SEARCH_BASE_URL` 指向已有
 SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内网、保留地址及非标准端口。

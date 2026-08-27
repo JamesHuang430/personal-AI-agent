@@ -18,6 +18,8 @@
 - Agent 可按对话意图生成安全的文本类文件，并提供用户隔离的下载入口；
 - Agent 可通过自托管的免费开源 SearXNG 聚合搜索公开互联网，并在摘要不足时安全提取网页正文；
 - 最新信息回答展示可点击来源卡片，网页内容按不可信数据处理并阻止内网地址访问；
+- 内置 MCP Streamable HTTP 客户端与工具白名单，默认连接隔离运行的 Microsoft MarkItDown MCP；
+- “文档理解 Skill”支持在聊天页上传 PDF、Word、PowerPoint、Excel、CSV 和文本附件，随后直接总结、问答或提取表格；
 - Agent 可创建异步视频任务，查询进度并在完成后下载结果；
 - 服务端持久化会话输入输出，并支持最近对话恢复；
 - PostgreSQL/pgvector 长期记忆检索与 Apache AGE 知识图谱；
@@ -29,7 +31,7 @@
 - PostgreSQL 16 + pgvector + Apache AGE、Redis 和可选 MinIO 的 Compose 服务；
 - Alembic 迁移骨架和基础测试。
 
-文档处理、真实天气/票务 Provider 和支付将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
+真实天气/票务 Provider 和支付将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
 
 ## Docker 快速启动
 
@@ -75,6 +77,11 @@ pgvector 与 Apache AGE 已包含在 PostgreSQL 服务中，无需单独启动�
 `ASSISTANT_WEB_SEARCH_ENABLED=false` 关闭，也可用 `ASSISTANT_WEB_SEARCH_BASE_URL` 指向已有
 SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内网、保留地址及非标准端口。
 
+文档理解默认启用：聊天页的“回形针”按钮上传附件后，用自然语言提出“总结附件”、
+“比较两份报告”或“提取表格”等要求即可调用。页面显示“文档理解 Skill · MCP 就绪”时，
+代表 MarkItDown MCP 已连通。MCP 服务仅挂载只读附件卷，并位于无公网出口的内部网络；
+应用只允许调用 `convert_to_markdown`。可通过 `ASSISTANT_MCP_ENABLED=false` 整体关闭。
+
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
 生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。
 
@@ -106,6 +113,8 @@ SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内
 - `POST /api/v1/users/check-in`：每日签到。
 - `GET /api/v1/chat/models`：动态读取当前 LLM 渠道的 OpenAI 兼容模型目录。
 - `POST /api/v1/chat`：使用用户选择的模型调用当前启用的 LLM 渠道。
+- `GET /api/v1/chat/capabilities`：读取已安装 Skill 与 MCP 服务状态。
+- `POST /api/v1/files/upload`：上传当前用户的文档附件。
 - `GET /api/v1/files`：列出当前用户由 Agent 生成的文件。
 - `GET /api/v1/videos`：列出当前用户的视频生成任务。
 - `GET /api/v1/admin/model-channels`：运营后台渠道清单（仅 `19000` 服务提供）。

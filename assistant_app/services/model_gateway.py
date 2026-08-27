@@ -258,6 +258,7 @@ async def chat_completion(
     message: str,
     history: list[dict[str, str]],
     memory_context: str = "",
+    document_context: str = "",
 ) -> dict[str, Any]:
     async with runtime.sessions() as session:
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
@@ -291,6 +292,8 @@ async def chat_completion(
     ]
     if memory_context:
         messages.append({"role": "system", "content": memory_context})
+    if document_context:
+        messages.append({"role": "system", "content": document_context})
     messages.extend([*history[-20:], {"role": "user", "content": message}])
 
     available_tools = [

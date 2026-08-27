@@ -23,7 +23,14 @@ from assistant_app.services.director import (
     project_payload,
     run_director_project,
 )
+from assistant_app.services.document_skill import (
+    document_skill_payload,
+    extract_document_context,
+    get_owned_documents,
+    uploaded_document_payload,
+)
 from assistant_app.services.generated_files import create_generated_file, file_payload
+from assistant_app.services.mcp_runtime import list_mcp_tools
 from assistant_app.services.memory import (
     learn_from_exchange,
     organize_conversation_session,
@@ -67,6 +74,7 @@ class ChatPayload(BaseModel):
     message: str = Field(min_length=1, max_length=8_000)
     conversation_id: UUID | None = None
     history: list[HistoryMessage] = Field(default_factory=list, max_length=20)
+    file_ids: list[UUID] = Field(default_factory=list, max_length=8)
 
     @field_validator("model")
     @classmethod
@@ -101,6 +109,31 @@ async def available_models(
             status_code=502,
             detail=f"获取模型列表失败（HTTP {exc.status_code}）",
         ) from exc
+
+
+@router.get("/capabilities")
+async def chat_capabilities(
+    request: Request,
+    _user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    settings = request.app.state.settings
+    tools = await list_mcp_tools(settings, settings.mcp_markitdown_url)
+    ready = "convert_to_markdown" in tools
+    return {
+        "skills": [document_skill_payload(ready=ready)],
+        "mcp": {
+            "enabled": settings.mcp_enabled,
+            "servers": [
+                {
+                    "id": "markitdown",
+                    "name": "Microsoft MarkItDown",
+                    "transport": "streamable-http",
+                    "ready": ready,
+                    "tools": [name for name in tools if name == "convert_to_markdown"],
+                }
+            ],
+        },
+    }
 
 
 @router.get("/agent-model-routing")
@@ -219,6 +252,19 @@ async def chat(
     user: Annotated[User, Depends(current_user)],
 ) -> dict[str, object]:
     try:
+        if len(payload.file_ids) > request.app.state.settings.document_max_files_per_message:
+            raise ValueError(
+                f"每次最多使用 {request.app.state.settings.document_max_files_per_message} 个附件"
+            )
+        documents = await get_owned_documents(
+            request.app.state.runtime,
+            user.id,
+            payload.file_ids,
+        )
+        document_context, mcp_calls = await extract_document_context(
+            request.app.state.settings,
+            documents,
+        )
         prepared = await prepare_conversation(
             request.app.state.runtime,
             user.id,
@@ -239,6 +285,7 @@ async def chat(
             payload.message.strip(),
             prepared.history,
             memory_context.text,
+            document_context,
         )
         files: list[dict[str, object]] = []
         video_jobs: list[dict[str, object]] = []
@@ -382,6 +429,9 @@ async def chat(
         result["music_jobs"] = music_jobs
         result["speech_jobs"] = speech_jobs
         result["director_projects"] = director_projects
+        result["documents"] = [uploaded_document_payload(record) for record in documents]
+        result["skills_used"] = ["document-understanding"] if documents else []
+        result["mcp_calls"] = mcp_calls
         return result
     except ModelRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc

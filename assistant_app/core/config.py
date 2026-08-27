@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: float = Field(default=15.0, ge=3.0, le=60.0)
     web_fetch_max_bytes: int = Field(default=1_500_000, ge=100_000, le=5_000_000)
     web_fetch_max_chars: int = Field(default=12_000, ge=1_000, le=30_000)
+    mcp_enabled: bool = True
+    mcp_markitdown_url: str = "http://markitdown-mcp:3001/mcp"
+    mcp_timeout_seconds: float = Field(default=30.0, ge=3.0, le=120.0)
+    mcp_max_result_chars: int = Field(default=30_000, ge=2_000, le=100_000)
+    document_max_bytes: int = Field(default=20_000_000, ge=100_000, le=50_000_000)
+    document_max_files_per_message: int = Field(default=4, ge=1, le=8)
 
     @property
     def cors_origin_list(self) -> list[str]:

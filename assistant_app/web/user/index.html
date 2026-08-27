@@ -147,6 +147,7 @@
               <button type="button" data-prompt="帮我整理今天最重要的三件事">✓ 整理今日待办</button>
               <button type="button" data-prompt="给我讲一个轻松有趣的笑话">☺ 讲个笑话放松一下</button>
               <button type="button" data-prompt="帮我生成一份 Markdown 格式的本周工作计划文件">▤ 生成一份计划文件</button>
+              <button type="button" data-prompt="请总结我上传的附件，并列出关键结论和待办事项">📎 总结上传的文档</button>
               <button type="button" data-prompt="生成一个 4 秒的视频：清晨阳光下的山间湖泊，电影感镜头">▶ 生成一段短视频</button>
               <button type="button" data-prompt="请启动导演工作室，制作一部有对白和中文字幕的 60 秒、9:16、电影感写实短剧。故事创意：">🎬 启动导演团队</button>
               <button type="button" data-prompt="介绍一下你目前能帮助我做什么">✦ 了解你的能力</button>
@@ -166,8 +167,12 @@
             </select>
             <input id="model-custom" class="hidden" maxlength="200" aria-label="输入自定义模型 ID" placeholder="输入自定义模型 ID">
             <button id="refresh-models" type="button" title="刷新模型列表">↻</button>
+            <span id="skill-status" class="skill-status checking">文档 Skill 检查中…</span>
           </div>
+          <div id="attachment-tray" class="attachment-tray hidden" aria-live="polite"></div>
           <form id="chat-form" class="composer">
+            <input id="attachment-input" class="hidden" type="file" multiple accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.json,.html">
+            <button id="attach-btn" class="attach-button" type="button" aria-label="上传附件" title="上传 PDF、Word、PPT、Excel 或文本">⌕</button>
             <textarea id="chat-input" rows="1" maxlength="8000" placeholder="问我任何事情，Enter 发送，Shift + Enter 换行"></textarea>
             <button id="send-btn" type="submit" aria-label="发送">↑</button>
           </form>

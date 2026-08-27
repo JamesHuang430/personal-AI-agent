@@ -17,13 +17,18 @@ let activeChatController = null;
 let activeDirectorProject = null;
 let directorProjectTimer = null;
 let directorOneClickMode = false;
+let selectedAttachments = [];
+let attachmentUploads = 0;
 const customModelValue = '__custom__';
 const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token');
 const initialWelcomeMarkup = $('#messages').innerHTML;
 
 async function api(path, options = {}) {
+  const headers = options.body instanceof FormData
+    ? { ...(options.headers || {}) }
+    : { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const response = await fetch(`/api/v1${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers,
     ...options,
   });
   if (response.status === 204) return null;
@@ -96,9 +101,25 @@ function showApp(user) {
   updateUser(user);
   loadModels();
   loadAgentRouting();
+  loadCapabilities();
   loadConversations();
   loadVideoGallery();
   loadDirectorProjects();
+}
+
+async function loadCapabilities() {
+  const badge = $('#skill-status');
+  badge.className = 'skill-status checking';
+  badge.textContent = '文档 Skill 检查中…';
+  try {
+    const result = await api('/chat/capabilities');
+    const skill = (result.skills || []).find((item) => item.id === 'document-understanding');
+    badge.className = `skill-status${skill?.ready ? '' : ' unavailable'}`;
+    badge.textContent = skill?.ready ? '文档理解 Skill · MCP 就绪' : '文档 MCP 暂不可用';
+  } catch (error) {
+    badge.className = 'skill-status unavailable';
+    badge.textContent = '能力状态获取失败';
+  }
 }
 
 async function loadConversations() {
@@ -559,12 +580,13 @@ function addMessage(role, content, meta = '') {
 
 function renderArtifacts(message, result) {
   const files = result.files || [];
+  const documents = result.documents || [];
   const jobs = result.video_jobs || [];
   const musicJobs = result.music_jobs || [];
   const speechJobs = result.speech_jobs || [];
   const directorProjects = result.director_projects || [];
   const webSources = result.web_sources || [];
-  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length && !directorProjects.length && !webSources.length) return;
+  if (!files.length && !documents.length && !jobs.length && !musicJobs.length && !speechJobs.length && !directorProjects.length && !webSources.length) return;
   const list = document.createElement('div');
   list.className = 'artifact-list';
   for (const [index, source] of webSources.entries()) {
@@ -579,6 +601,12 @@ function renderArtifacts(message, result) {
     const card = document.createElement('div');
     card.className = 'artifact-card';
     card.innerHTML = `<div><strong>▤ ${escapeHtml(file.filename)}</strong><small>${Math.max(1, Math.ceil(file.size_bytes / 1024))} KB</small></div><a href="${file.download_url}">下载文件</a>`;
+    list.appendChild(card);
+  }
+  for (const attachment of documents) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.innerHTML = `<div><strong>📎 ${escapeHtml(attachment.filename)}</strong><small>文档理解 Skill · MarkItDown MCP 已读取</small></div><a href="${attachment.download_url}">查看附件</a>`;
     list.appendChild(card);
   }
   for (const job of jobs) {
@@ -700,7 +728,11 @@ async function sendMessage(text) {
     return;
   }
   window.localStorage.setItem('assistant-model', selectedModel);
-  addMessage('user', content);
+  const attachmentsForMessage = [...selectedAttachments];
+  const attachmentMeta = attachmentsForMessage.length
+    ? `附件：${attachmentsForMessage.map((item) => item.filename).join('、')}`
+    : '';
+  addMessage('user', content, attachmentMeta);
   conversation.push({ role: 'user', content });
   $('#chat-input').value = '';
   const controller = new AbortController();
@@ -710,15 +742,27 @@ async function sendMessage(text) {
   try {
     const result = await api('/chat', {
       method: 'POST',
-      body: JSON.stringify({ model: selectedModel, message: content, conversation_id: currentConversationId }),
+      body: JSON.stringify({
+        model: selectedModel,
+        message: content,
+        conversation_id: currentConversationId,
+        file_ids: attachmentsForMessage.map((item) => item.id),
+      }),
       signal: controller.signal,
     });
     pending.remove();
     const webMeta = result.web_sources?.length ? ` · 联网检索 ${result.web_sources.length} 个来源` : '';
-    const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}${webMeta}`);
+    const documentMeta = result.documents?.length ? ` · 文档 Skill/MCP ${result.documents.length} 个附件` : '';
+    const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}${webMeta}${documentMeta}`);
     renderArtifacts(responseMessage, result);
     conversation.push({ role: 'assistant', content: result.content });
     currentConversationId = result.conversation_id;
+    if (attachmentsForMessage.length) {
+      selectedAttachments = selectedAttachments.filter(
+        (item) => !attachmentsForMessage.some((used) => used.id === item.id),
+      );
+      renderAttachmentTray();
+    }
     sessionNeedsOrganization = true;
     $('#organize-session').disabled = false;
     const usedMemories = Number(result.memory?.items_used || 0);
@@ -744,6 +788,59 @@ async function sendMessage(text) {
     $('#chat-input').focus();
   }
 }
+
+function formatFileSize(bytes) {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000000) return `${Math.ceil(bytes / 1000)} KB`;
+  return `${(bytes / 1000000).toFixed(1)} MB`;
+}
+
+function renderAttachmentTray() {
+  const tray = $('#attachment-tray');
+  tray.classList.toggle('hidden', !selectedAttachments.length);
+  tray.innerHTML = selectedAttachments.map((item) => `
+    <div class="attachment-chip" data-file-id="${item.id}">
+      <span>📎 ${escapeHtml(item.filename)}</span>
+      <small>${formatFileSize(item.size_bytes)}</small>
+      <button type="button" aria-label="移除附件">×</button>
+    </div>`).join('');
+  tray.querySelectorAll('.attachment-chip button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.closest('.attachment-chip').dataset.fileId;
+      selectedAttachments = selectedAttachments.filter((item) => item.id !== id);
+      renderAttachmentTray();
+    });
+  });
+}
+
+async function uploadAttachment(file) {
+  if (selectedAttachments.length + attachmentUploads >= 4) {
+    notify('每次最多使用 4 个附件');
+    return;
+  }
+  const form = new FormData();
+  form.append('upload', file);
+  attachmentUploads += 1;
+  $('#attach-btn').classList.add('uploading');
+  try {
+    const uploaded = await api('/files/upload', { method: 'POST', body: form });
+    selectedAttachments.push(uploaded);
+    renderAttachmentTray();
+    notify(`附件已上传：${uploaded.filename}`);
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    attachmentUploads -= 1;
+    $('#attach-btn').classList.toggle('uploading', attachmentUploads > 0);
+  }
+}
+
+$('#attach-btn').addEventListener('click', () => $('#attachment-input').click());
+$('#attachment-input').addEventListener('change', async (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  for (const file of files) await uploadAttachment(file);
+});
 
 function setChatGenerating(generating) {
   const button = $('#send-btn');
@@ -818,6 +915,8 @@ function resetConversationView(reloadHistory = true) {
   conversation = [];
   currentConversationId = null;
   sessionNeedsOrganization = false;
+  selectedAttachments = [];
+  renderAttachmentTray();
   $('#messages').innerHTML = initialWelcomeMarkup;
   $('#organize-session').disabled = true;
   $('#session-memory-status').textContent = '本次会话结束后，将自动提炼素材、想法、目标与关系';

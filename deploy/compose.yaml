@@ -43,12 +43,20 @@ services:
       ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS: ${ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS:-15}
       ASSISTANT_WEB_FETCH_MAX_BYTES: ${ASSISTANT_WEB_FETCH_MAX_BYTES:-1500000}
       ASSISTANT_WEB_FETCH_MAX_CHARS: ${ASSISTANT_WEB_FETCH_MAX_CHARS:-12000}
+      ASSISTANT_MCP_ENABLED: ${ASSISTANT_MCP_ENABLED:-true}
+      ASSISTANT_MCP_MARKITDOWN_URL: ${ASSISTANT_MCP_MARKITDOWN_URL:-http://markitdown-mcp:3001/mcp}
+      ASSISTANT_MCP_TIMEOUT_SECONDS: ${ASSISTANT_MCP_TIMEOUT_SECONDS:-30}
+      ASSISTANT_MCP_MAX_RESULT_CHARS: ${ASSISTANT_MCP_MAX_RESULT_CHARS:-30000}
+      ASSISTANT_DOCUMENT_MAX_BYTES: ${ASSISTANT_DOCUMENT_MAX_BYTES:-20000000}
+      ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE: ${ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE:-4}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       searxng:
+        condition: service_healthy
+      markitdown-mcp:
         condition: service_healthy
     expose:
       - "8000"
@@ -63,6 +71,7 @@ services:
       - edge_net
       - app_net
       - data_net
+      - mcp_net
 
   admin-api:
     <<: *runtime-defaults
@@ -137,6 +146,27 @@ services:
     networks:
       - edge_net
       - app_net
+
+  markitdown-mcp:
+    <<: *runtime-defaults
+    build:
+      context: ..
+      dockerfile: docker/markitdown-mcp/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}
+    image: personal-ai-assistant-markitdown-mcp:${MARKITDOWN_MCP_IMAGE_TAG:-0.0.1a4}
+    expose:
+      - "3001"
+    volumes:
+      - generated_files:/data/generated:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - mcp_net
 
   postgres:
     <<: *runtime-defaults
@@ -235,4 +265,6 @@ networks:
   edge_net:
   app_net:
   data_net:
+    internal: true
+  mcp_net:
     internal: true

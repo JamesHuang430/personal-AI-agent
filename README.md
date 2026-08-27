@@ -79,7 +79,7 @@ SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内
 
 文档理解默认启用：聊天页的“回形针”按钮上传附件后，用自然语言提出“总结附件”、
 “比较两份报告”或“提取表格”等要求即可调用。页面显示“文档理解 Skill · MCP 就绪”时，
-代表 MarkItDown MCP 已连通。MCP 服务仅挂载只读附件卷，并位于无公网出口的内部网络；
+代表基于 Microsoft MarkItDown 引擎的 MCP 服务已连通。MCP 服务仅挂载只读附件卷，并位于无公网出口的内部网络；
 应用只允许调用 `convert_to_markdown`。可通过 `ASSISTANT_MCP_ENABLED=false` 整体关闭。
 
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。

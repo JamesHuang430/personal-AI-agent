@@ -18,8 +18,13 @@ RUN groupadd --system markitdown \
 
 WORKDIR /srv/markitdown
 
-# The official package pins the compatible MCP SDK and MarkItDown extras itself.
-RUN python -m pip install "markitdown-mcp==0.0.1a4"
+# Keep the converter focused on the formats exposed by the product. The upstream
+# markitdown-mcp alpha currently pulls every optional Azure/audio dependency.
+RUN python -m pip install \
+    "mcp>=1.29,<2" \
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1,<1"
+
+COPY --chown=markitdown:markitdown docker/markitdown-mcp/server.py ./server.py
 
 USER markitdown
 EXPOSE 3001
@@ -27,4 +32,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
     CMD ["python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',3001),3); s.close()"]
 
-CMD ["markitdown-mcp", "--http", "--host", "0.0.0.0", "--port", "3001"]
+CMD ["python", "server.py"]

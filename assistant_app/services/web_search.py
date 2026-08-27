@@ -139,8 +139,17 @@ async def _search_searxng(
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise WebSearchError("SearXNG 搜索服务地址配置无效")
 
+    provider_query = query
+    if topic == "news":
+        candidate = provider_query
+        for marker in ("今天", "今日", "当天"):
+            candidate = candidate.replace(marker, " ")
+        candidate = " ".join(candidate.split())
+        if len(candidate) >= 2:
+            provider_query = candidate
+
     params: dict[str, str | int] = {
-        "q": query,
+        "q": provider_query,
         "format": "json",
         # China-hosted dedicated news engines are often sparse or noisy. The
         # general engines return better current coverage when time_range is set.

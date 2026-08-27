@@ -1,0 +1,2 @@
+# The instance is reachable only from the private Compose network and the limiter
+# is disabled in settings.yml. SearXNG still loads this file during startup.

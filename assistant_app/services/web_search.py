@@ -151,7 +151,11 @@ async def _search_searxng(
 
     timeout = httpx.Timeout(settings.web_search_timeout_seconds, connect=5.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            trust_env=False,
+            headers={"X-Real-IP": "127.0.0.1"},
+        ) as client:
             response = await client.get(f"{base_url}/search", params=params)
             response.raise_for_status()
             payload = response.json()

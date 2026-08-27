@@ -132,6 +132,7 @@ services:
       retries: 5
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
       - searxng_cache:/var/cache/searxng
     networks:
       - edge_net

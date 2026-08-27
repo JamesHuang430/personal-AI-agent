@@ -37,18 +37,19 @@ def test_web_url_normalization_rejects_credentials_and_unusual_ports() -> None:
 async def test_search_filters_unsafe_and_duplicate_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_search(*_args: object) -> list[dict[str, str]]:
+    async def fake_search(*_args: object) -> list[dict[str, object]]:
         return [
             {
                 "title": "最新资料",
-                "href": "https://example.com/latest",
-                "body": "公开摘要",
+                "url": "https://example.com/latest",
+                "content": "公开摘要",
+                "engines": ["baidu", "sogou"],
             },
-            {"title": "重复", "href": "https://example.com/latest"},
-            {"title": "脚本", "href": "javascript:alert(1)"},
+            {"title": "重复", "url": "https://example.com/latest"},
+            {"title": "脚本", "url": "javascript:alert(1)"},
         ]
 
-    monkeypatch.setattr("assistant_app.services.web_search._search_sync", fake_search)
+    monkeypatch.setattr("assistant_app.services.web_search._search_searxng", fake_search)
     result = await search_web(
         Settings(_env_file=None),
         " 最新 AI 数据 ",
@@ -63,7 +64,7 @@ async def test_search_filters_unsafe_and_duplicate_results(
             "url": "https://example.com/latest",
             "snippet": "公开摘要",
             "date": "",
-            "source": "example.com",
+            "source": "baidu, sogou",
         }
     ]
 

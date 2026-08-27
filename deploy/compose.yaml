@@ -38,7 +38,7 @@ services:
       ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY: ${ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY:-true}
       ASSISTANT_MEMORY_EMBEDDING_THREADS: ${ASSISTANT_MEMORY_EMBEDDING_THREADS:-2}
       ASSISTANT_WEB_SEARCH_ENABLED: ${ASSISTANT_WEB_SEARCH_ENABLED:-true}
-      ASSISTANT_WEB_SEARCH_PROVIDER: ${ASSISTANT_WEB_SEARCH_PROVIDER:-ddgs}
+      ASSISTANT_WEB_SEARCH_BASE_URL: ${ASSISTANT_WEB_SEARCH_BASE_URL:-http://searxng:8080}
       ASSISTANT_WEB_SEARCH_MAX_RESULTS: ${ASSISTANT_WEB_SEARCH_MAX_RESULTS:-6}
       ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS: ${ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS:-15}
       ASSISTANT_WEB_FETCH_MAX_BYTES: ${ASSISTANT_WEB_FETCH_MAX_BYTES:-1500000}
@@ -47,6 +47,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      searxng:
         condition: service_healthy
     expose:
       - "8000"
@@ -90,7 +92,7 @@ services:
       ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY: ${ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY:-true}
       ASSISTANT_MEMORY_EMBEDDING_THREADS: ${ASSISTANT_MEMORY_EMBEDDING_THREADS:-2}
       ASSISTANT_WEB_SEARCH_ENABLED: ${ASSISTANT_WEB_SEARCH_ENABLED:-true}
-      ASSISTANT_WEB_SEARCH_PROVIDER: ${ASSISTANT_WEB_SEARCH_PROVIDER:-ddgs}
+      ASSISTANT_WEB_SEARCH_BASE_URL: ${ASSISTANT_WEB_SEARCH_BASE_URL:-http://searxng:8080}
       ASSISTANT_WEB_SEARCH_MAX_RESULTS: ${ASSISTANT_WEB_SEARCH_MAX_RESULTS:-6}
       ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS: ${ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS:-15}
       ASSISTANT_WEB_FETCH_MAX_BYTES: ${ASSISTANT_WEB_FETCH_MAX_BYTES:-1500000}
@@ -111,6 +113,29 @@ services:
       - edge_net
       - app_net
       - data_net
+
+  searxng:
+    <<: *runtime-defaults
+    image: docker.io/searxng/searxng:${SEARXNG_IMAGE_TAG:-latest}
+    environment:
+      SEARXNG_SECRET: ${ASSISTANT_SECRET_KEY:?ASSISTANT_SECRET_KEY is required}
+      SEARXNG_BIND_ADDRESS: 0.0.0.0
+      SEARXNG_PORT: 8080
+      FORCE_OWNERSHIP: "false"
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "--proxy=off", "--header", "X-Real-IP: 127.0.0.1", "http://127.0.0.1:8080/healthz"]
+      start_period: 30s
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng_cache:/var/cache/searxng
+    networks:
+      - edge_net
+      - app_net
 
   postgres:
     <<: *runtime-defaults
@@ -203,6 +228,7 @@ volumes:
   redis_data:
   minio_data:
   generated_files:
+  searxng_cache:
 
 networks:
   edge_net:

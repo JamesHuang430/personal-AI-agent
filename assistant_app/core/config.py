@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     memory_retrieval_limit: int = 12
     memory_graph_limit: int = 200
     web_search_enabled: bool = True
-    web_search_provider: Literal["ddgs"] = "ddgs"
+    web_search_base_url: str = "http://searxng:8080"
     web_search_max_results: int = Field(default=6, ge=1, le=10)
     web_search_timeout_seconds: float = Field(default=15.0, ge=3.0, le=60.0)
     web_fetch_max_bytes: int = Field(default=1_500_000, ge=100_000, le=5_000_000)

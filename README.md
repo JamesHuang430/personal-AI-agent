@@ -16,7 +16,7 @@
 - 视频生成渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
 - 邮件渠道管理：运营后台配置 SMTP、加密授权码并发送测试邮件；
 - Agent 可按对话意图生成安全的文本类文件，并提供用户隔离的下载入口；
-- Agent 可通过免费开源 DDGS 聚合搜索公开互联网，并在摘要不足时安全提取网页正文；
+- Agent 可通过自托管的免费开源 SearXNG 聚合搜索公开互联网，并在摘要不足时安全提取网页正文；
 - 最新信息回答展示可点击来源卡片，网页内容按不可信数据处理并阻止内网地址访问；
 - Agent 可创建异步视频任务，查询进度并在完成后下载结果；
 - 服务端持久化会话输入输出，并支持最近对话恢复；
@@ -69,10 +69,11 @@ pgvector 与 Apache AGE 已包含在 PostgreSQL 服务中，无需单独启动�
 `ASSISTANT_MEMORY_EMBEDDING_PROVIDER` 设为 `channel`，并配置对应模型名；向量服务
 暂时不可用时，会话、长期记忆和图谱仍会正常保存，并自动使用关键词回退检索。
 
-联网检索默认启用并使用 MIT 许可证的 `DDGS`，不需要 API Key。Agent 遇到最新数据、
-新闻、价格、政策或用户明确要求搜索时会自动调用；可通过
-`ASSISTANT_WEB_SEARCH_ENABLED=false` 关闭。搜索服务只读取公开 HTTP/HTTPS 页面，限制
-响应大小和超时，并拒绝本机、内网、保留地址及非标准端口。
+联网检索默认启用并在 Compose 内部启动 `SearXNG`，不需要 API Key，也不向公网暴露
+搜索服务端口。默认启用百度、搜狗、Bing 中国站及新闻搜索，Agent 遇到最新数据、新闻、
+价格、政策或用户明确要求搜索时会自动调用；可通过
+`ASSISTANT_WEB_SEARCH_ENABLED=false` 关闭，也可用 `ASSISTANT_WEB_SEARCH_BASE_URL` 指向已有
+SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内网、保留地址及非标准端口。
 
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
 生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。

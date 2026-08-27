@@ -1,0 +1,49 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - baidu
+      - bing
+      - bing news
+      - sogou
+      - sina
+
+general:
+  debug: false
+  instance_name: "Zhiban AI Search"
+  enable_metrics: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "zh-CN"
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+
+engines:
+  - name: baidu
+    disabled: false
+    weight: 1.5
+  - name: bing
+    disabled: false
+    base_url: https://cn.bing.com
+  - name: bing news
+    disabled: false
+    base_url: https://cn.bing.com
+  - name: sogou
+    disabled: false
+    weight: 1.2
+  - name: sina
+    disabled: false
+    inactive: false

@@ -5,7 +5,6 @@ import ipaddress
 import re
 import socket
 from html.parser import HTMLParser
-from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -129,30 +128,40 @@ async def _assert_public_url(url: str) -> None:
         raise WebSearchError("禁止访问本机、内网或保留网络地址")
 
 
-def _search_sync(
+async def _search_searxng(
+    settings: Settings,
     query: str,
     topic: str,
     time_range: str | None,
-    max_results: int,
-    timeout: float,
-) -> list[dict[str, Any]]:
-    try:
-        from ddgs import DDGS
-    except ImportError as exc:  # pragma: no cover - verified by deployment smoke test
-        raise WebSearchError("DDGS 搜索组件尚未安装") from exc
+) -> list[dict[str, object]]:
+    base_url = settings.web_search_base_url.rstrip("/")
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise WebSearchError("SearXNG 搜索服务地址配置无效")
 
-    client = DDGS(timeout=max(3, int(timeout)))
-    options = {
-        "region": "cn-zh",
-        "safesearch": "moderate",
-        "timelimit": time_range,
-        "max_results": max_results,
-        "backend": "auto",
+    params: dict[str, str | int] = {
+        "q": query,
+        "format": "json",
+        "categories": "news" if topic == "news" else "general",
+        "language": "zh-CN",
+        "safesearch": 1,
     }
+    if time_range:
+        params["time_range"] = time_range
+
+    timeout = httpx.Timeout(settings.web_search_timeout_seconds, connect=5.0)
     try:
-        return client.news(query, **options) if topic == "news" else client.text(query, **options)
-    except Exception as exc:
-        raise WebSearchError(f"开源搜索后端暂时不可用：{type(exc).__name__}") from exc
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.get(f"{base_url}/search", params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise WebSearchError(f"SearXNG 搜索服务暂时不可用：{type(exc).__name__}") from exc
+
+    rows = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise WebSearchError("SearXNG 返回了无法识别的数据")
+    return [row for row in rows if isinstance(row, dict)]
 
 
 async def search_web(
@@ -169,24 +178,31 @@ async def search_web(
     if not cleaned_query:
         raise WebSearchError("搜索词不能为空")
     selected_topic = topic if topic in {"general", "news"} else "general"
-    ranges = {"day": "d", "week": "w", "month": "m", "year": "y", "all": None}
+    ranges = {
+        "day": "day",
+        "week": "week",
+        "month": "month",
+        "year": "year",
+        "all": None,
+    }
     selected_range = ranges.get(time_range)
     limit = max(1, min(max_results or settings.web_search_max_results, 10))
-    rows = await asyncio.wait_for(
-        asyncio.to_thread(
-            _search_sync,
-            cleaned_query,
-            selected_topic,
-            selected_range,
-            limit,
-            settings.web_search_timeout_seconds,
-        ),
-        timeout=settings.web_search_timeout_seconds + 2,
-    )
+    try:
+        rows = await asyncio.wait_for(
+            _search_searxng(
+                settings,
+                cleaned_query,
+                selected_topic,
+                selected_range,
+            ),
+            timeout=settings.web_search_timeout_seconds + 2,
+        )
+    except TimeoutError as exc:
+        raise WebSearchError("SearXNG 搜索超时，请稍后重试") from exc
     results: list[dict[str, str]] = []
     seen: set[str] = set()
     for row in rows:
-        url = _normalized_http_url(row.get("href") or row.get("url"))
+        url = _normalized_http_url(row.get("url"))
         if not url or url in seen:
             continue
         seen.add(url)
@@ -194,11 +210,17 @@ async def search_web(
             {
                 "title": str(row.get("title") or url)[:300],
                 "url": url,
-                "snippet": str(row.get("body") or row.get("description") or "")[:1_200],
-                "date": str(row.get("date") or "")[:80],
-                "source": str(row.get("source") or urlsplit(url).hostname or "")[:120],
+                "snippet": str(row.get("content") or "")[:1_200],
+                "date": str(row.get("publishedDate") or "")[:80],
+                "source": str(
+                    ", ".join(str(item) for item in row.get("engines", []))
+                    if isinstance(row.get("engines"), list)
+                    else row.get("engine") or urlsplit(url).hostname or ""
+                )[:120],
             }
         )
+        if len(results) >= limit:
+            break
     if not results:
         raise WebSearchError("没有检索到可用的公开网页结果")
     return {"query": cleaned_query, "topic": selected_topic, "results": results}

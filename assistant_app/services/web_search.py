@@ -161,6 +161,14 @@ async def _search_searxng(
             response = await client.get(f"{base_url}/search", params=params)
             response.raise_for_status()
             payload = response.json()
+            rows = payload.get("results") if isinstance(payload, dict) else None
+            if time_range and isinstance(rows, list) and not rows:
+                # Baidu occasionally challenges time-filtered searches while the
+                # same current-news query succeeds without the filter.
+                params.pop("time_range", None)
+                response = await client.get(f"{base_url}/search", params=params)
+                response.raise_for_status()
+                payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise WebSearchError(f"SearXNG 搜索服务暂时不可用：{type(exc).__name__}") from exc
 

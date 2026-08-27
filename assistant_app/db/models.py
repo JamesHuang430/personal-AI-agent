@@ -302,6 +302,9 @@ class DirectorProject(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     final_summary: Mapped[str | None] = mapped_column(Text)
+    quality_report: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
     preview_video_job_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
     )
@@ -337,6 +340,9 @@ class DirectorAgentRun(Base):
     )
     decision_summary: Mapped[str | None] = mapped_column(Text)
     deliverable: Mapped[str | None] = mapped_column(Text)
+    result_data: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
     error_message: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -369,6 +375,13 @@ class DirectorShot(Base):
     video_job_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
     )
+    speech_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("speech_jobs.id", ondelete="SET NULL")
+    )
+    speaker: Mapped[str | None] = mapped_column(String(100))
+    speech_text: Mapped[str | None] = mapped_column(Text)
+    subtitle_text: Mapped[str | None] = mapped_column(Text)
+    rendered_path: Mapped[str | None] = mapped_column(String(500))
     continuity_snapshot: Mapped[dict[str, object]] = mapped_column(
         JSON, nullable=False, default=dict, server_default=text("'{}'::json")
     )

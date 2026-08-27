@@ -335,9 +335,9 @@ async def chat(
                     await project_payload(request.app.state.runtime, project)
                 )
                 notices.append(
-                    "一键成片项目已启动：9 位 Agent 将逐镜生成并自动合片。"
+                    "一键成片项目已启动：4 位执行 Agent 将逐镜生成视频和语音、烧录字幕并自动合片。"
                     if bool(arguments.get("one_click", False))
-                    else "导演项目已启动：总导演和 8 位专业 Agent 将依次把关。"
+                    else "导演项目已启动：将生成一个带独立配音和烧录字幕的真实预览镜头。"
                 )
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))

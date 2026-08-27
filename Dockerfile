@@ -37,7 +37,7 @@ RUN mkdir -p /opt/fastembed \
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 RUN sed -i "s#http://deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY assistant_app ./assistant_app

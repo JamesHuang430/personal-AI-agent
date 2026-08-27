@@ -11,7 +11,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import desc, select
 
 from assistant_app.core.config import Settings
-from assistant_app.db.models import DirectorAgentRun, DirectorProject, DirectorShot, VideoJob
+from assistant_app.db.models import (
+    DirectorAgentRun,
+    DirectorProject,
+    DirectorShot,
+    SpeechJob,
+    VideoJob,
+)
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.agent_model_router import (
     AGENT_MODEL_PROFILES,
@@ -19,6 +25,7 @@ from assistant_app.services.agent_model_router import (
 )
 from assistant_app.services.generated_files import GENERATED_ROOT
 from assistant_app.services.model_gateway import agent_text_completion, list_available_models
+from assistant_app.services.speech_gateway import create_speech_job, run_speech_job
 from assistant_app.services.video_gateway import create_video_job, run_video_job, video_job_payload
 
 
@@ -27,15 +34,10 @@ class DirectorProjectNotFoundError(LookupError):
 
 
 AGENT_BRIEFS = {
-    "director": "明确创作目标、生产边界、整体调度顺序和各 Agent 的验收标准",
-    "concept": "判断目标受众、核心情绪、开场钩子、差异化卖点与追看动力",
-    "script": "完成角色动机、三幕或节拍结构、主要场次、对白原则和结尾回收",
-    "assets": "建立角色、场景、服装、道具、色彩与跨镜头连续性资产圣经",
-    "storyboard": "拆分可执行镜头，说明景别、机位、运动、时长、转场和轴线关系",
-    "video": "把关键镜头转为视频模型提示词，约束人物稳定、动作、画幅与负面条件",
-    "audio": "规划对白、旁白、环境声、拟音、声场和需要额外语音模型介入的部分",
-    "edit": "给出粗剪顺序、节奏、声画同步、转场、字幕安全区与输出规范",
-    "quality": "按叙事、连续性、画面、声音、技术、版权与平台合规执行终审",
+    "story": "把创意收敛为受众、主题、人物、节拍、可表演对白和完整剧本",
+    "visual": "建立连续性资产并输出可直接驱动视频、配音和字幕的逐镜方案",
+    "media": "调用视频和语音渠道，完成混音、字幕烧录与合片",
+    "quality": "检查真实媒体文件的画面、音轨、字幕、时长和可交付性",
 }
 
 SHOT_BEATS = (
@@ -82,6 +84,61 @@ def _split_agent_output(content: str) -> tuple[str, str]:
     paragraphs = [item.strip() for item in normalized.split("\n\n") if item.strip()]
     summary = paragraphs[0] if paragraphs else normalized
     return summary[:1200], normalized[:64_000]
+
+
+def _extract_tagged_json(content: str, marker: str) -> dict[str, object]:
+    if marker not in content:
+        raise ValueError(f"Agent 交付物缺少 {marker}")
+    tail = content.split(marker, 1)[1].strip().replace("```json", "").replace("```", "")
+    start = tail.find("{")
+    if start < 0:
+        raise ValueError(f"{marker} 后没有 JSON 对象")
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(tail[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{marker} JSON 无法解析：{exc.msg}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{marker} 必须是 JSON 对象")
+    return parsed
+
+
+def _validate_story_data(data: dict[str, object]) -> dict[str, object]:
+    required_text = ("logline", "audience", "theme", "script")
+    if any(not str(data.get(key) or "").strip() for key in required_text):
+        raise ValueError("故事 JSON 缺少 logline、audience、theme 或 script")
+    if not isinstance(data.get("characters"), list) or not data["characters"]:
+        raise ValueError("故事 JSON 必须包含至少一个角色")
+    if not isinstance(data.get("beats"), list) or not data["beats"]:
+        raise ValueError("故事 JSON 必须包含剧情节拍")
+    return data
+
+
+def _fit_speech_text(value: object, seconds: str) -> str:
+    cleaned = re.sub(r"\s+", "", str(value or "").strip())
+    limit = max(8, int(seconds) * 4)
+    if len(cleaned) <= limit:
+        return cleaned
+    candidate = cleaned[:limit]
+    cut = max(candidate.rfind(mark) for mark in "。！？；，")
+    return candidate[: cut + 1] if cut >= limit // 2 else candidate
+
+
+def _voice_id_for_spec(spec: dict[str, object], continuity: dict[str, object]) -> str | None:
+    explicit = str(spec.get("voice_id") or "").strip()
+    if explicit:
+        return explicit[:200]
+    speaker = str(spec.get("speaker") or "").strip()
+    characters = continuity.get("characters")
+    if isinstance(characters, list):
+        for character in characters:
+            if not isinstance(character, dict):
+                continue
+            if str(character.get("name") or "").strip() != speaker:
+                continue
+            voice_id = str(character.get("voice_id") or "").strip()
+            if voice_id:
+                return voice_id[:200]
+    return None
 
 
 def _default_continuity_bible(project: DirectorProject) -> dict[str, object]:
@@ -169,6 +226,11 @@ def _fallback_shot_spec(sequence: int, total: int, premise: str) -> dict[str, ob
             "本镜必须用一个可见的新动作和一个明确的新构图推进剧情，"
             "不得重复上一镜的站位、动作、景别和机位。"
         ),
+        "speaker": "旁白",
+        "speech_text": f"{beat}。",
+        "subtitle_text": f"{beat}。",
+        "voice_id": None,
+        "speech_speed": 1.0,
     }
 
 
@@ -210,11 +272,24 @@ def _normalize_shot_spec(
     instruction = _shot_spec_instruction(raw)
     if not instruction:
         return fallback
+    speech_text = str(raw.get("speech_text") or raw.get("dialogue") or "").strip()
+    if not speech_text:
+        speech_text = str(fallback["speech_text"])
+    subtitle_text = str(raw.get("subtitle_text") or speech_text).strip()
+    try:
+        speech_speed = max(0.5, min(float(raw.get("speech_speed") or 1.0), 2.0))
+    except (TypeError, ValueError):
+        speech_speed = 1.0
     return {
         "sequence": sequence,
         "title": title[:200],
         "story_beat": str(raw.get("story_beat") or title).strip(),
         "instruction": instruction[:6_000],
+        "speaker": str(raw.get("speaker") or "旁白").strip()[:100],
+        "speech_text": speech_text,
+        "subtitle_text": subtitle_text,
+        "voice_id": str(raw.get("voice_id") or "").strip()[:200] or None,
+        "speech_speed": speech_speed,
     }
 
 
@@ -321,6 +396,49 @@ def _extract_storyboard_plan(content: str, total: int, premise: str) -> list[dic
     return plan
 
 
+def _validate_visual_data(
+    data: dict[str, object],
+    project: DirectorProject,
+    durations: list[str],
+) -> dict[str, object]:
+    continuity = data.get("continuity")
+    if not isinstance(continuity, dict):
+        raise ValueError("视觉 JSON 缺少 continuity 对象")
+    characters = continuity.get("characters")
+    if not isinstance(characters, list) or not characters:
+        raise ValueError("连续性圣经必须包含至少一个角色")
+    raw_shots = data.get("shots")
+    if not isinstance(raw_shots, list) or len(raw_shots) != len(durations):
+        raise ValueError(f"视觉 JSON 必须包含正好 {len(durations)} 个镜头")
+
+    normalized: list[dict[str, object]] = []
+    for index, (raw, seconds) in enumerate(zip(raw_shots, durations, strict=True), start=1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"第 {index} 镜不是 JSON 对象")
+        if not str(raw.get("speech_text") or "").strip():
+            raise ValueError(f"第 {index} 镜缺少 speech_text，无法生成对白和字幕")
+        spec = _normalize_shot_spec(raw, index, len(durations), project.premise)
+        spoken = _fit_speech_text(spec["speech_text"], seconds)
+        if not spoken:
+            raise ValueError(f"第 {index} 镜没有可配音文本")
+        spec["speech_text"] = spoken
+        # 字幕必须与实际送入 TTS 的文本一致，避免声画内容不一致。
+        spec["subtitle_text"] = spoken
+        normalized.append(spec)
+
+    continuity.setdefault("version", 1)
+    continuity.setdefault("lock_mode", "text")
+    continuity.setdefault("relationships", [])
+    continuity.setdefault("visual_rules", [project.visual_style])
+    continuity["continuity_notes"] = project.continuity_notes or continuity.get(
+        "continuity_notes", ""
+    )
+    continuity["reference_capability"] = _default_continuity_bible(project)[
+        "reference_capability"
+    ]
+    return {"continuity": continuity, "shots": normalized}
+
+
 def _shot_prompt(
     project: DirectorProject,
     sequence: int,
@@ -329,10 +447,19 @@ def _shot_prompt(
     spec: dict[str, object],
 ) -> str:
     continuity = _continuity_prompt(project)
+    speaker = str(spec.get("speaker") or "旁白").strip()
+    speech_text = str(spec.get("speech_text") or "").strip()
+    performance = (
+        f"画面中的{speaker}正在说台词“{speech_text}”，必须有自然、连续、与说话节奏一致的"
+        "口部动作和表情变化；视频模型不要生成字幕或画面文字。"
+        if speaker not in {"旁白", "画外音", "解说"}
+        else f"本镜使用画外旁白“{speech_text}”，画面人物不要做无意义的说话口型。"
+    )
     return (
         f"{project.visual_style}，{project.aspect_ratio} AI 短剧，第 {sequence}/{total} 镜，"
         f"时长 {seconds} 秒。\n"
         f"【本镜唯一分镜方案】\n{spec['instruction']}\n"
+        f"【对白表演要求】{performance}\n"
         "只表现本镜的叙事任务、地点、动作和机位；不得复用其他镜头的构图或动作。\n"
         f"【全片故事背景】{project.premise}\n"
         f"【跨镜连续性圣经】{continuity}\n"
@@ -351,6 +478,7 @@ def agent_run_payload(run: DirectorAgentRun) -> dict[str, object]:
         "status": run.status,
         "decision_summary": run.decision_summary,
         "deliverable": run.deliverable,
+        "result_data": run.result_data or {},
         "error_message": run.error_message if run.status == "failed" else None,
     }
 
@@ -364,6 +492,11 @@ def shot_payload(shot: DirectorShot, job: VideoJob | None = None) -> dict[str, o
         "seconds": shot.seconds,
         "status": shot.status,
         "continuity_snapshot": shot.continuity_snapshot,
+        "speaker": shot.speaker,
+        "speech_text": shot.speech_text,
+        "subtitle_text": shot.subtitle_text,
+        "speech_job_id": str(shot.speech_job_id) if shot.speech_job_id else None,
+        "has_burned_subtitles": bool(shot.rendered_path and shot.subtitle_text),
         "error_message": shot.error_message if shot.status == "failed" else None,
         "video": video_job_payload(job) if job else None,
     }
@@ -419,6 +552,7 @@ async def project_payload(
         "current_stage": project.current_stage,
         "progress": project.progress,
         "final_summary": project.final_summary,
+        "quality_report": project.quality_report or {},
         "error_message": project.error_message if project.status == "failed" else None,
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "agents": [agent_run_payload(run) for run in runs],
@@ -575,9 +709,15 @@ async def _completed_context(runtime: RuntimeDependencies, project_id: UUID) -> 
                 .order_by(DirectorShot.sequence)
             )
         ).all()
-    completed = "\n\n".join(
-        f"### {row.agent_name}\n{(row.deliverable or '')[:1800]}" for row in rows
-    )[-14_000:]
+    completed_parts: list[str] = []
+    for row in rows:
+        if row.result_data:
+            payload = json.dumps(row.result_data, ensure_ascii=False, separators=(",", ":"))
+            body = payload[:10_000]
+        else:
+            body = (row.deliverable or "")[:1800]
+        completed_parts.append(f"### {row.agent_name}\n{body}")
+    completed = "\n\n".join(completed_parts)[-16_000:]
     continuity = _continuity_prompt(project) if project and project.continuity_bible else ""
     if continuity:
         shot_context = "\n".join(
@@ -616,14 +756,144 @@ async def _load_storyboard_plan(
     total: int,
 ) -> list[dict[str, object]]:
     async with runtime.sessions() as session:
-        deliverable = await session.scalar(
-            select(DirectorAgentRun.deliverable).where(
+        result_data = await session.scalar(
+            select(DirectorAgentRun.result_data).where(
                 DirectorAgentRun.project_id == project.id,
-                DirectorAgentRun.agent_key == "storyboard",
+                DirectorAgentRun.agent_key == "visual",
                 DirectorAgentRun.status == "completed",
             )
         )
-    return _extract_storyboard_plan(str(deliverable or ""), total, project.premise)
+    if isinstance(result_data, dict) and isinstance(result_data.get("shots"), list):
+        shots = result_data["shots"]
+        if len(shots) == total:
+            return [dict(item) for item in shots if isinstance(item, dict)]
+    raise RuntimeError("视觉 Agent 没有提供可执行的结构化分镜")
+
+
+async def _run_media_command(*command: str) -> tuple[str, str]:
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    decoded_out = stdout.decode(errors="ignore")
+    decoded_err = stderr.decode(errors="ignore")
+    if process.returncode != 0:
+        raise RuntimeError(f"媒体处理失败：{decoded_err[-500:]}")
+    return decoded_out, decoded_err
+
+
+async def _probe_media(path: str | Path) -> dict[str, object]:
+    stdout, _ = await _run_media_command(
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        os.fspath(path),
+    )
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("ffprobe 没有返回有效 JSON") from exc
+    return payload if isinstance(payload, dict) else {}
+
+
+def _srt_timestamp(seconds: float) -> str:
+    milliseconds = max(0, round(seconds * 1000))
+    hours, milliseconds = divmod(milliseconds, 3_600_000)
+    minutes, milliseconds = divmod(milliseconds, 60_000)
+    secs, milliseconds = divmod(milliseconds, 1000)
+    return f"{hours:02}:{minutes:02}:{secs:02},{milliseconds:03}"
+
+
+def _subtitle_filter_path(path: Path) -> str:
+    return path.as_posix().replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+
+
+async def _render_dialogue_shot(
+    shot: DirectorShot,
+    video_job: VideoJob,
+    speech_job: SpeechJob,
+) -> str:
+    video_available = video_job.storage_path and await asyncio.to_thread(
+        Path(video_job.storage_path).is_file
+    )
+    if not video_available:
+        raise RuntimeError("视频渠道没有留下可合成的文件")
+    speech_available = speech_job.storage_path and await asyncio.to_thread(
+        Path(speech_job.storage_path).is_file
+    )
+    if not speech_available:
+        raise RuntimeError("语音渠道没有留下可合成的文件")
+
+    await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
+    subtitle_path = GENERATED_ROOT / f"director-shot-{shot.id}.srt"
+    rendered_path = GENERATED_ROOT / f"director-shot-{shot.id}.mp4"
+    duration = float(shot.seconds)
+    subtitle = re.sub(r"[\r\n]+", " ", shot.subtitle_text or shot.speech_text or "").strip()
+    srt = f"1\n00:00:00,000 --> {_srt_timestamp(max(0.5, duration - 0.05))}\n{subtitle}\n"
+    await asyncio.to_thread(subtitle_path.write_text, srt, encoding="utf-8")
+
+    source_info = await _probe_media(video_job.storage_path)
+    streams = source_info.get("streams", [])
+    has_native_audio = isinstance(streams, list) and any(
+        isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams
+    )
+    subtitle_filter = (
+        f"subtitles=filename='{_subtitle_filter_path(subtitle_path)}':"
+        "force_style='FontName=Noto Sans CJK SC,FontSize=18,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=72'"
+    )
+    voice_chain = f"[1:a]aresample=48000,apad,atrim=0:{duration:.3f},volume=1.35[voice]"
+    if has_native_audio:
+        audio_filter = (
+            f"[0:a]aresample=48000,volume=0.20[bed];{voice_chain};"
+            f"[bed][voice]amix=inputs=2:duration=longest:dropout_transition=1,"
+            f"apad,atrim=0:{duration:.3f}[aout]"
+        )
+        audio_map = "[aout]"
+    else:
+        audio_filter = voice_chain
+        audio_map = "[voice]"
+
+    await _run_media_command(
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_job.storage_path,
+        "-i",
+        speech_job.storage_path,
+        "-vf",
+        subtitle_filter,
+        "-filter_complex",
+        audio_filter,
+        "-map",
+        "0:v:0",
+        "-map",
+        audio_map,
+        "-t",
+        f"{duration:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        os.fspath(rendered_path),
+    )
+    return os.fspath(rendered_path)
 
 
 async def _create_and_run_shot(
@@ -647,6 +917,9 @@ async def _create_and_run_shot(
         seconds=seconds,
         status="processing",
         continuity_snapshot=continuity,
+        speaker=str(spec.get("speaker") or "旁白")[:100],
+        speech_text=_fit_speech_text(spec.get("speech_text"), seconds),
+        subtitle_text=_fit_speech_text(spec.get("speech_text"), seconds),
     )
     async with runtime.sessions() as session, session.begin():
         session.add(shot)
@@ -660,15 +933,47 @@ async def _create_and_run_shot(
         message = completed_job.error_message if completed_job else "视频任务不存在"
         await _update_shot(runtime, shot.id, status="failed", error_message=message)
         raise RuntimeError(message or "镜头生成失败")
-    await _update_shot(runtime, shot.id, status="completed", error_message=None)
+
+    speech_job = await create_speech_job(
+        runtime,
+        project.user_id,
+        shot.speech_text or "",
+        _voice_id_for_spec(spec, continuity),
+        float(spec.get("speech_speed") or 1.0),
+    )
+    await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
+    await run_speech_job(runtime, settings, speech_job.id)
+    async with runtime.sessions() as session:
+        completed_speech = await session.get(SpeechJob, speech_job.id)
+    if completed_speech is None or completed_speech.status != "completed":
+        message = completed_speech.error_message if completed_speech else "语音任务不存在"
+        await _update_shot(runtime, shot.id, status="failed", error_message=message)
+        raise RuntimeError(message or "语音生成失败")
+
+    rendered_path = await _render_dialogue_shot(shot, completed_job, completed_speech)
+    async with runtime.sessions() as session, session.begin():
+        stored_job = await session.get(VideoJob, completed_job.id, with_for_update=True)
+        if stored_job is not None:
+            stored_job.storage_path = rendered_path
+            stored_job.updated_at = datetime.now(UTC)
+    completed_job.storage_path = rendered_path
+    shot.speech_job_id = speech_job.id
+    shot.rendered_path = rendered_path
+    await _update_shot(
+        runtime,
+        shot.id,
+        status="completed",
+        rendered_path=rendered_path,
+        error_message=None,
+    )
     return shot, completed_job
 
 
-async def _concat_shots(project: DirectorProject, jobs: list[VideoJob]) -> str:
+async def _concat_shots(project: DirectorProject, shots: list[DirectorShot]) -> str:
     await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
     list_path = GENERATED_ROOT / f"director-{project.id}.concat.txt"
     output_path = GENERATED_ROOT / f"director-{project.id}.mp4"
-    lines = [f"file '{Path(str(job.storage_path)).as_posix()}'" for job in jobs]
+    lines = [f"file '{Path(str(shot.rendered_path)).as_posix()}'" for shot in shots]
     await asyncio.to_thread(list_path.write_text, "\n".join(lines), encoding="utf-8")
     try:
         process = await asyncio.create_subprocess_exec(
@@ -705,6 +1010,8 @@ async def _execute_agent_run(
     run: DirectorAgentRun,
     progress: int,
 ) -> None:
+    if run.agent_key not in {"story", "visual"}:
+        raise ValueError(f"{run.agent_name}不是文本规划 Agent")
     await _update_project(
         runtime,
         project.id,
@@ -719,27 +1026,26 @@ async def _execute_agent_run(
         "请给出可展示、可审计的专业判断摘要和具体交付物；不要输出隐藏思维链或逐步内心推理。"
         "必须使用简体中文，并严格使用两个标题：【判断摘要】与【交付物】。"
     )
-    if run.agent_key == "assets":
+    marker = "【故事JSON】" if run.agent_key == "story" else "【视觉JSON】"
+    durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+    if run.agent_key == "story":
         system_prompt += (
-            "你还必须在交付物末尾输出【连续性JSON】，后接严格合法 JSON："
-            '{"version":1,"lock_mode":"text","characters":['
-            '{"name":"","role":"主角或配角","appearance":"五官发型年龄体态",'
-            '"wardrobe":"固定服装配色材质标志物","voice_profile":"固定音色语速口音",'
-            '"voice_id":null,"portrait_prompt":"定妆照提示词",'
-            '"reference_image_url":null}],"relationships":['
-            '{"source":"","target":"","relation":""}],"visual_rules":[]}。'
-            "角色必须覆盖故事中的主角、配角和关键人物；"
-            "若用户给了定妆照 URL 或 voice_id，原样登记。"
+            "交付物末尾必须输出【故事JSON】，后接严格合法的 JSON 对象，至少包含："
+            "logline、audience、theme、characters、beats、script。characters 每项包含 name、"
+            "role、appearance、wardrobe、voice_profile、voice_id；beats 是按时间顺序排列的"
+            "剧情节拍；script 必须包含可表演对白，而不是只有梗概。"
         )
-    if run.agent_key == "storyboard":
-        durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+    else:
         system_prompt += (
-            f"你必须规划正好 {len(durations)} 个可独立生成的视频镜头，"
-            f"对应时长依次为 {durations} 秒。每一镜的叙事任务、地点、核心动作、景别和运镜"
-            "必须实质不同，同时保持角色连续性。交付物末尾必须输出【分镜JSON】，"
-            "后接严格合法 JSON 数组；每项必须包含 sequence、title、story_beat、characters、"
-            "location、action、shot_size、camera、lighting、transition、positive_prompt、"
-            "negative_prompt。不得用“同上”“延续上一镜”等方式省略字段。"
+            f"你必须规划正好 {len(durations)} 个可独立生成的视频镜头，对应时长依次为"
+            f" {durations} 秒。交付物末尾必须输出【视觉JSON】，后接严格合法 JSON 对象。"
+            "对象必须包含 continuity 和 shots。continuity 包含 characters、relationships、"
+            "visual_rules；每个角色包含稳定的 appearance、wardrobe、voice_profile、voice_id。"
+            "shots 每项必须包含 sequence、title、story_beat、characters、location、action、"
+            "shot_size、camera、lighting、transition、positive_prompt、negative_prompt、speaker、"
+            "speech_text、subtitle_text、voice_id、speech_speed。每一镜都必须有非空 speech_text，"
+            "用于真实语音生成，字幕将与 speech_text 保持完全一致。中文对白长度不得超过该镜"
+            "秒数乘以 4 个汉字。不得使用“同上”省略字段。"
         )
     user_prompt = (
         f"项目：{project.title}\n故事创意：{project.premise}\n目标时长："
@@ -749,16 +1055,40 @@ async def _execute_agent_run(
         "用户提供的角色/定妆/声线锁定信息："
         f"{project.continuity_notes or '暂无，需由资产 Agent 建立'}"
     )
-    result = await agent_text_completion(
-        runtime,
-        settings,
-        run.model_name,
-        system_prompt,
-        user_prompt,
-    )
-    summary, deliverable = _split_agent_output(str(result["content"]))
-    if run.agent_key == "assets":
-        bible = _extract_continuity_bible(str(result["content"]), project)
+    result_data: dict[str, object] | None = None
+    content = ""
+    validation_error = ""
+    for _attempt in range(2):
+        correction = (
+            f"\n\n上一次结构化交付校验失败：{validation_error}。请完整重写，并确保 {marker} "
+            "后的 JSON 严格合法。"
+            if validation_error
+            else ""
+        )
+        result = await agent_text_completion(
+            runtime,
+            settings,
+            run.model_name,
+            system_prompt,
+            user_prompt + correction,
+        )
+        content = str(result["content"])
+        try:
+            parsed = _extract_tagged_json(content, marker)
+            result_data = (
+                _validate_story_data(parsed)
+                if run.agent_key == "story"
+                else _validate_visual_data(parsed, project, durations)
+            )
+            break
+        except ValueError as exc:
+            validation_error = str(exc)
+    if result_data is None:
+        raise ValueError(f"{run.agent_name}连续两次未通过结构化校验：{validation_error}")
+
+    summary, deliverable = _split_agent_output(content)
+    if run.agent_key == "visual":
+        bible = dict(result_data["continuity"])
         await _update_project(runtime, project.id, continuity_bible=bible)
         project.continuity_bible = bible
     await _update_run(
@@ -767,7 +1097,88 @@ async def _execute_agent_run(
         status="completed",
         decision_summary=summary,
         deliverable=deliverable,
+        result_data=result_data,
     )
+
+
+async def _build_quality_report(
+    project: DirectorProject,
+    shots: list[DirectorShot],
+    final_path: str | None,
+) -> dict[str, object]:
+    issues: list[str] = []
+    shot_checks: list[dict[str, object]] = []
+    for shot in shots:
+        rendered = Path(shot.rendered_path or "")
+        if not shot.rendered_path or not await asyncio.to_thread(rendered.is_file):
+            issues.append(f"第 {shot.sequence} 镜缺少合成文件")
+            continue
+        info = await _probe_media(rendered)
+        streams = info.get("streams", [])
+        has_video = isinstance(streams, list) and any(
+            isinstance(item, dict) and item.get("codec_type") == "video" for item in streams
+        )
+        has_audio = isinstance(streams, list) and any(
+            isinstance(item, dict) and item.get("codec_type") == "audio" for item in streams
+        )
+        try:
+            duration = float(dict(info.get("format") or {}).get("duration") or 0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        has_subtitle = bool(shot.subtitle_text and shot.speech_text)
+        if not has_video:
+            issues.append(f"第 {shot.sequence} 镜没有视频轨")
+        if not has_audio:
+            issues.append(f"第 {shot.sequence} 镜没有语音轨")
+        if not shot.speech_job_id:
+            issues.append(f"第 {shot.sequence} 镜没有独立语音任务")
+        if not has_subtitle:
+            issues.append(f"第 {shot.sequence} 镜没有字幕文本")
+        if abs(duration - float(shot.seconds)) > 1.0:
+            issues.append(f"第 {shot.sequence} 镜时长异常：{duration:.2f}s")
+        shot_checks.append(
+            {
+                "sequence": shot.sequence,
+                "video": has_video,
+                "audio": has_audio,
+                "burned_subtitles": has_subtitle,
+                "duration_seconds": round(duration, 3),
+            }
+        )
+
+    final_check: dict[str, object] | None = None
+    if project.one_click:
+        if not final_path or not await asyncio.to_thread(Path(final_path).is_file):
+            issues.append("最终合片文件不存在")
+        else:
+            info = await _probe_media(final_path)
+            streams = info.get("streams", [])
+            has_video = isinstance(streams, list) and any(
+                isinstance(item, dict) and item.get("codec_type") == "video" for item in streams
+            )
+            has_audio = isinstance(streams, list) and any(
+                isinstance(item, dict) and item.get("codec_type") == "audio" for item in streams
+            )
+            try:
+                duration = float(dict(info.get("format") or {}).get("duration") or 0)
+            except (TypeError, ValueError):
+                duration = 0.0
+            if not has_video or not has_audio:
+                issues.append("最终合片缺少视频轨或语音轨")
+            if abs(duration - project.target_seconds) > 1.5:
+                issues.append(f"最终合片时长异常：{duration:.2f}s")
+            final_check = {
+                "video": has_video,
+                "audio": has_audio,
+                "duration_seconds": round(duration, 3),
+            }
+    return {
+        "passed": not issues,
+        "shots": shot_checks,
+        "final": final_check,
+        "issues": issues,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }
 
 
 async def run_director_project(
@@ -798,24 +1209,30 @@ async def run_director_project(
             progress=2,
             error_message=None,
         )
-        preproduction_runs = [run for run in runs if run.agent_key not in {"edit", "quality"}]
-        for index, run in enumerate(preproduction_runs):
-            progress = 3 + round((index / len(preproduction_runs)) * 61)
-            await _execute_agent_run(runtime, settings, project, run, progress)
+        story_run = next(run for run in runs if run.agent_key == "story")
+        visual_run = next(run for run in runs if run.agent_key == "visual")
+        media_run = next(run for run in runs if run.agent_key == "media")
+        quality_run = next(run for run in runs if run.agent_key == "quality")
+        await _execute_agent_run(runtime, settings, project, story_run, 8)
+        await _execute_agent_run(runtime, settings, project, visual_run, 25)
 
+        await _update_project(runtime, project_id, current_stage="media", progress=40)
+        await _update_run(runtime, media_run.id, status="processing", error_message=None)
+
+        completed_shots: list[DirectorShot] = []
         if project.one_click:
             durations = _shot_durations(project.target_seconds)
             shot_plan = await _load_storyboard_plan(runtime, project, len(durations))
             await _update_project(
                 runtime,
                 project_id,
-                current_stage="video",
-                progress=65,
+                current_stage="media",
+                progress=42,
                 planned_shots=len(durations),
             )
             completed_jobs: list[VideoJob] = []
             for sequence, seconds in enumerate(durations, start=1):
-                _shot, completed_job = await _create_and_run_shot(
+                completed_shot, completed_job = await _create_and_run_shot(
                     runtime,
                     settings,
                     project,
@@ -824,19 +1241,19 @@ async def run_director_project(
                     seconds,
                     shot_plan[sequence - 1],
                 )
+                completed_shots.append(completed_shot)
                 completed_jobs.append(completed_job)
                 await _update_project(
                     runtime,
                     project_id,
                     preview_video_job_id=completed_jobs[0].id,
                     completed_shots=len(completed_jobs),
-                    progress=65 + round((len(completed_jobs) / len(durations)) * 25),
+                    progress=42 + round((len(completed_jobs) / len(durations)) * 43),
                 )
         else:
-            completed_jobs = []
             shot_plan = await _load_storyboard_plan(runtime, project, 1)
-            await _update_project(runtime, project_id, current_stage="preview", progress=68)
-            _shot, completed_preview = await _create_and_run_shot(
+            await _update_project(runtime, project_id, current_stage="media", progress=45)
+            completed_shot, completed_preview = await _create_and_run_shot(
                 runtime,
                 settings,
                 project,
@@ -845,37 +1262,72 @@ async def run_director_project(
                 "4",
                 shot_plan[0],
             )
+            completed_shots.append(completed_shot)
             await _update_project(
                 runtime,
                 project_id,
                 preview_video_job_id=completed_preview.id,
                 completed_shots=1,
-                progress=82,
+                progress=85,
             )
 
-        edit_run = next(run for run in runs if run.agent_key == "edit")
-        await _execute_agent_run(runtime, settings, project, edit_run, 92)
+        final_path: str | None = None
         if project.one_click:
-            await _update_project(runtime, project_id, current_stage="edit", progress=95)
-            final_path = await _concat_shots(project, completed_jobs)
+            await _update_project(runtime, project_id, current_stage="media", progress=88)
+            final_path = await _concat_shots(project, completed_shots)
             project.final_video_path = final_path
-            await _update_project(runtime, project_id, final_video_path=final_path, progress=97)
+            await _update_project(runtime, project_id, final_video_path=final_path, progress=91)
             preview_note = (
-                f"一键成片已生成 {len(completed_jobs)} 个连续镜头，并合成为约 "
+                f"已生成 {len(completed_shots)} 个带配音和烧录字幕的镜头，并合成为约 "
                 f"{project.target_seconds} 秒影片。"
             )
         else:
-            preview_note = "首个真实预览镜头已生成，可在成片展示区播放。"
+            preview_note = "首个带真实配音和烧录字幕的预览镜头已生成。"
+        await _update_run(
+            runtime,
+            media_run.id,
+            status="completed",
+            decision_summary="视频、语音、混音和字幕烧录均已执行。",
+            deliverable=preview_note,
+            result_data={
+                "completed_shots": len(completed_shots),
+                "final_video_path": final_path,
+                "speech": True,
+                "burned_subtitles": True,
+            },
+        )
 
-        quality_run = next(run for run in runs if run.agent_key == "quality")
-        await _execute_agent_run(runtime, settings, project, quality_run, 98)
+        await _update_project(runtime, project_id, current_stage="quality", progress=95)
+        await _update_run(runtime, quality_run.id, status="processing", error_message=None)
+        report = await _build_quality_report(project, completed_shots, final_path)
+        await _update_project(runtime, project_id, quality_report=report)
+        if not report["passed"]:
+            issues = "；".join(str(item) for item in report["issues"])
+            await _update_run(
+                runtime,
+                quality_run.id,
+                status="failed",
+                decision_summary="真实媒体质检未通过。",
+                deliverable=json.dumps(report, ensure_ascii=False),
+                result_data=report,
+                error_message=issues[:360],
+            )
+            raise RuntimeError(f"质检未通过：{issues}")
+        await _update_run(
+            runtime,
+            quality_run.id,
+            status="completed",
+            decision_summary="真实媒体质检通过：画面、语音、字幕和时长均可交付。",
+            deliverable=json.dumps(report, ensure_ascii=False),
+            result_data=report,
+        )
         await _update_project(
             runtime,
             project_id,
             status="completed",
             current_stage="completed",
             progress=100,
-            final_summary=f"总导演与 8 位专业 Agent 已完成制作。{preview_note}",
+            final_summary=f"总导演编排器与 4 位执行 Agent 已完成制作。{preview_note}",
             error_message=None,
         )
     except Exception as exc:

@@ -237,7 +237,10 @@ async function loadAgentRouting() {
       const target = document.querySelector(`[data-agent-model="${assignment.agent}"]`);
       if (!target) continue;
       target.textContent = assignment.model || '暂无可用模型';
-      target.title = `${assignment.reason} · ${assignment.status === 'matched' ? '能力匹配' : '降级匹配'}`;
+      const statusLabel = assignment.status === 'matched'
+        ? '能力匹配'
+        : assignment.status === 'tool' ? '工具执行' : '降级匹配';
+      target.title = `${assignment.reason} · ${statusLabel}`;
       target.dataset.modelStatus = assignment.status;
     }
   } catch (error) {
@@ -596,7 +599,7 @@ function renderArtifacts(message, result) {
   for (const project of directorProjects) {
     const card = document.createElement('div');
     card.className = 'artifact-card director-artifact';
-    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>1 位总导演 + 8 位专业 Agent · ${escapeHtml(project.aspect_ratio)} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
+    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>总导演编排器 + 4 位执行 Agent · ${escapeHtml(project.aspect_ratio)} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
     card.querySelector('a').addEventListener('click', (event) => {
       event.preventDefault();
       switchWorkspace('studio');
@@ -827,61 +830,25 @@ $('#mobile-menu').addEventListener('click', () => setSidebarOpen(!$('.sidebar').
 $('#sidebar-scrim').addEventListener('click', () => setSidebarOpen(false));
 
 const productionStages = {
-  concept: {
-    avatar: '策', role: '策划 AGENT · 已完成', status: '总导演已通过',
-    title: '核心钩子成立：一次错过，改变两个人的十年',
-    summary: '目标受众偏好高密度情绪与明确悬念。用“同站台却没见面”的视觉事件开场，能在前 6 秒建立冲突，并自然引出那封未寄出的信。',
-    evidence: ['✓ 前 6 秒出现人物、关系与缺口', '✓ 单集目标可在 100 秒内闭环', '✓ 结尾保留下一集追看问题'],
-    deliverable: '项目圣经 · 核心命题与受众假设 v2', meta: '题材：都市情感 · 核心情绪：遗憾 · 单集钩子：错身',
+  story: {
+    avatar: '文', role: '故事 AGENT · 结构化规划', status: '等待执行',
+    title: '故事、人物、节拍与对白', summary: '输出必须通过故事 JSON 校验，随后直接交给视觉 Agent。',
+    evidence: ['✓ 人物与动机', '✓ 时间节拍', '✓ 可表演对白'], deliverable: '故事 JSON', meta: '受众 / 主题 / 角色 / 剧本',
   },
-  script: {
-    avatar: '文', role: '编剧 AGENT · 已完成', status: '总导演已通过',
-    title: '第 3 集的情绪峰值已落在第 78 秒',
-    summary: '本集按“误以为等到—确认错过—发现信件”三段推进。删去解释性旁白后，让动作和道具承担信息，能让竖屏观看中的情绪转折更清晰。',
-    evidence: ['✓ 每 15–20 秒出现一次新信息', '✓ 台词长度适配口型与节奏', '✓ 人物行为符合前两集动机'],
-    deliverable: '第 03 集拍摄剧本 v5', meta: '8 场 · 24 镜 · 预计 1′42″ · 台词 312 字',
+  visual: {
+    avatar: '镜', role: '视觉 AGENT · 结构化规划', status: '等待上游',
+    title: '连续性、分镜、台词与视频提示词', summary: '逐镜方案会直接驱动视频生成、语音生成和字幕烧录。',
+    evidence: ['✓ 连续性圣经', '✓ 独立镜头提示词', '✓ 每镜语音与字幕'], deliverable: '视觉 JSON', meta: '资产 / 分镜 / speech_text',
   },
-  assets: {
-    avatar: '角', role: '美术 AGENT · 已完成', status: '资产已锁定',
-    title: '角色、场景与视觉规则已建立统一锚点',
-    summary: '两位主角均已生成正面、侧面、背面和表情参考；雨夜公交站的色温、雨量与广告灯箱位置写入资产锁，后续镜头不得重新想象这些稳定特征。',
-    evidence: ['✓ 每位角色至少 3 个角度参考', '✓ 服装与关键道具具有唯一编号', '✓ 场景光位与色板已锁定'],
-    deliverable: '角色与场景资产包 v4', meta: '2 位角色 · 3 个场景 · 7 件关键道具 · 18 张参考',
-  },
-  storyboard: {
-    avatar: '镜', role: '分镜导演 AGENT · 正在工作', status: '等待你确认',
-    title: '第 12 镜：反打会削弱“错过”的力度',
-    summary: '如果现在切到林夏的正面表情，观众会提前获得情绪答案。保留车窗倒影，让她的反应晚 1.5 秒出现，能把“差一点看见”的遗憾留给观众。',
-    evidence: ['✓ 与第 11 镜的视线方向连续', '✓ 发型、耳饰、雨量与资产库一致', '! 镜头时长建议从 4.0s 调整为 5.5s'],
-    deliverable: 'SHOT 12 · 车窗倒影构图 v3', meta: '景别：近景 · 焦段：85mm · 运镜：缓慢侧移',
-  },
-  video: {
-    avatar: '帧', role: '摄影 AGENT · 等待上游', status: '等待分镜锁定',
-    title: '镜头生成策略已准备，先做关键帧再驱动视频',
-    summary: '为控制人物漂移，将先用锁定资产生成每镜起止关键帧，再按 3–6 秒的镜头颗粒度生成动态素材。复杂双人表演会拆成单人反应镜头组合。',
-    evidence: ['✓ 人物与场景参考将自动附加', '✓ 每镜生成参数可追溯', '! 双人同框镜头需要优先抽检'],
-    deliverable: '24 镜生成任务清单', meta: '关键帧 41 张 · 视频任务 24 个 · 预计 3 轮候选',
-  },
-  audio: {
-    avatar: '声', role: '声音 AGENT · 等待上游', status: '等待画面时长',
-    title: '对白、环境声与音乐将围绕情绪节拍分层',
-    summary: '先锁定角色声纹与表演意图，再做对白和口型；雨声、公交制动和信纸摩擦作为叙事声音，音乐只在人物确认错过后进入。',
-    evidence: ['✓ 角色声纹与年龄匹配', '✓ 对白情绪标注已完成', '! 配乐进入点依赖最终镜头时长'],
-    deliverable: '声音设计表 v2', meta: '对白 18 条 · 环境声 6 轨 · 音乐主题 1 个',
-  },
-  edit: {
-    avatar: '剪', role: '剪辑 AGENT · 等待上游', status: '等待可用素材',
-    title: '粗剪将先验证叙事，再进入精剪与包装',
-    summary: '先按分镜顺序建立无特效粗剪，检查信息是否可懂、节奏是否拖沓；通过后再处理口型、转场、字幕、调色与混音，避免对无效镜头过早精修。',
-    evidence: ['✓ 粗剪与精剪验收分离', '✓ 竖屏字幕安全区已设定', '✓ 声画同步将逐镜检查'],
-    deliverable: '时间线模板 · Episode 03', meta: '9:16 · 25fps · 1080×1920 · 峰值响度 -1 dBTP',
+  media: {
+    avatar: '制', role: '媒体制作 AGENT · 工具执行', status: '等待上游',
+    title: '真实视频、语音、混音和字幕', summary: '调用已配置的视频与语音渠道，再由 FFmpeg 合成带对白和烧录字幕的镜头。',
+    evidence: ['✓ 视频渠道任务', '✓ Speech 配音任务', '✓ FFmpeg 混音与字幕'], deliverable: '可播放 MP4', meta: '视频轨 / 语音轨 / 烧录字幕',
   },
   quality: {
-    avatar: '审', role: '监制 AGENT · 等待上游', status: '等待终版',
-    title: '终审将覆盖叙事、连续性、技术与合规四道门',
-    summary: '任何角色漂移、穿帮、闪烁、口型错位或关键情节不清都会退回对应 Agent，而不是在最终导出阶段用模糊处理掩盖。发布版还需完成版权、肖像与平台规范检查。',
-    evidence: ['✓ 逐镜连续性检查表已创建', '✓ 技术与内容合规独立验收', '✓ 问题可回溯到责任 Agent'],
-    deliverable: '终审与发布清单', meta: '叙事 6 项 · 连续性 9 项 · 技术 8 项 · 合规 7 项',
+    avatar: '审', role: '质检 AGENT · 否决门禁', status: '等待媒体',
+    title: '真实文件技术质检', summary: '通过 ffprobe 检查视频轨、语音轨、字幕标记和时长；失败时项目不会完成。',
+    evidence: ['✓ 视频轨', '✓ 语音轨', '✓ 字幕与时长'], deliverable: '结构化质检报告', meta: 'pass / reject / issues',
   },
 };
 
@@ -952,7 +919,7 @@ function renderDirectorProject(project) {
   $('.director-progress strong').textContent = `${project.progress}%`;
   $('.director-progress i').style.width = `${project.progress}%`;
 
-  const directorRun = project.agents.find((run) => run.agent === 'director');
+  const directorRun = project.agents.find((run) => run.agent === 'story');
   const activeRun = project.agents.find((run) => run.agent === project.current_stage);
   $('#director-heading').textContent = project.status === 'completed'
     ? (project.one_click ? '总导演已完成全片生成与合片交付' : '总导演已完成预制作与首镜交付')
@@ -962,7 +929,7 @@ function renderDirectorProject(project) {
   $('#director-summary').textContent = project.error_message
     || project.final_summary
     || directorRun?.decision_summary
-    || '总导演正在建立创作基线，并依次派发给 8 位专业 Agent。页面只展示可审计的判断摘要，不暴露隐藏思维链。';
+    || '总导演编排器正在调度 4 位执行 Agent。页面展示结构化交付和真实工具执行结果。';
 
   document.querySelectorAll('[data-stage]').forEach((button) => {
     const run = project.agents.find((item) => item.agent === button.dataset.stage);
@@ -980,7 +947,7 @@ function renderDirectorProject(project) {
 
   renderContinuityBible(project);
   renderDirectorShots(project);
-  if (activeRun && activeRun.agent !== 'director') renderProductionStage(activeRun.agent);
+  if (activeRun) renderProductionStage(activeRun.agent);
   window.clearTimeout(directorProjectTimer);
   if (['queued', 'processing'].includes(project.status)) {
     directorProjectTimer = window.setTimeout(() => loadDirectorProject(project.id), 3500);
@@ -1006,7 +973,7 @@ function renderContinuityBible(project) {
       return `<button type="button"><span class="asset-thumb person-${index % 2 ? 'two' : 'one'}">${escapeHtml(String(character.name || '角').slice(0, 1))}</span><span><strong>${escapeHtml(character.name || '未命名角色')} · ${escapeHtml(character.role || '角色')}</strong><small>${escapeHtml(character.appearance || '外貌待完善')} · ${escapeHtml(character.wardrobe || '服装待完善')} · ${escapeHtml(voice)}</small></span><em>${lock}</em></button>`;
     }).join('');
   } else {
-    assets.innerHTML = '<button type="button"><span class="asset-thumb person-one">角</span><span><strong>等待资产 Agent 建档</strong><small>外貌 / 服装 / 声线 / 定妆照</small></span><em>WAIT</em></button>';
+    assets.innerHTML = '<button type="button"><span class="asset-thumb person-one">角</span><span><strong>等待视觉 Agent 建档</strong><small>外貌 / 服装 / 声线 / 定妆照</small></span><em>WAIT</em></button>';
   }
   const relationPanel = $('#continuity-relationships');
   relationPanel.innerHTML = `<h3>人物关系 · ${characters.length ? '文字连续性已锁定' : '等待建档'}</h3>${relationships.length
@@ -1019,7 +986,8 @@ function renderDirectorShots(project) {
   $('#director-shot-strip').innerHTML = project.shots.map((shot) => `
     <button class="shot-card ${shot.status === 'completed' ? 'approved' : shot.status === 'processing' ? 'selected' : ''}" type="button" data-video-job="${escapeHtml(shot.video?.id || '')}">
       <div class="shot-frame frame-wide"><span>${shot.sequence}</span><i></i></div>
-      <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}</small>
+      <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}${shot.has_burned_subtitles ? ' · 配音+字幕' : ''}</small>
+      ${shot.speech_text ? `<small>${escapeHtml(shot.speaker || '旁白')}：${escapeHtml(shot.speech_text)}</small>` : ''}
     </button>`).join('');
   $('#shot-heading').nextElementSibling.textContent = `${project.completed_shots} / ${project.planned_shots} 镜已生成`;
 }
@@ -1029,8 +997,8 @@ function showDirectorStart(oneClick = false) {
   const title = $('#director-start-dialog h2');
   title.textContent = oneClick ? '一键成片' : '开始制作电影';
   $('#director-start-intro').textContent = oneClick
-    ? '总导演将调度 8 位专业 Agent，自动完成连续性建档、逐镜生成和最终合片。'
-    : '总导演会调度 8 位专业 Agent 完成预制作，并生成首个真实预览镜头供你确认。';
+    ? '总导演编排器将调度 4 位执行 Agent，逐镜生成视频和语音、烧录字幕并最终合片。'
+    : '总导演编排器会生成一个带真实配音和烧录字幕的预览镜头。';
   updateDirectorModeSummary();
   $('#director-start-dialog').showModal();
   window.setTimeout(() => $('#director-premise').focus(), 80);
@@ -1044,8 +1012,8 @@ function updateDirectorModeSummary() {
   panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
   panel.querySelector('span').textContent = directorOneClickMode
     ? `预计调用视频模型生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。定妆照仅在兼容主体参考模型时可硬锁；当前 H3 使用连续性圣经约束外貌、服装和声线，仍需终审 Agent 检查漂移。`
-    : '完成 1 位总导演和 8 位专业 Agent 的预制作，只生成第一个 4 秒预览镜头；确认连续性后再继续，额度更可控。';
-  $('#director-start-submit').textContent = directorOneClickMode ? `确认并生成约 ${estimatedShots} 个镜头` : '启动 1 位总导演 + 8 位 Agent';
+    : '由 4 位执行 Agent 生成第一个带配音和字幕的 4 秒预览镜头，额度更可控。';
+  $('#director-start-submit').textContent = directorOneClickMode ? `确认并生成约 ${estimatedShots} 个镜头` : '启动总导演编排器 + 4 位 Agent';
 }
 
 function videoStatusLabel(status) {
@@ -1111,7 +1079,7 @@ function renderStudioVideo(job) {
 function renderDirectorMovie(project) {
   const card = document.createElement('article');
   card.className = 'video-result-card completed director-final-movie';
-  card.innerHTML = `<div class="video-result-media"><video controls playsinline preload="metadata" src="${escapeHtml(project.final_video.preview_url)}" aria-label="一键成片：${escapeHtml(project.title)}"></video></div><div class="video-result-detail"><div class="video-result-heading"><strong>一键成片 · ${escapeHtml(project.title)}</strong><em>已合片</em></div><small>${project.target_seconds} 秒 · ${escapeHtml(project.aspect_ratio)} · ${project.completed_shots} 个镜头</small><p>${escapeHtml(project.final_summary || '总导演与 8 位专业 Agent 已完成制作。')}</p><a href="${escapeHtml(project.final_video.download_url)}">下载完整 MP4 ↓</a></div>`;
+  card.innerHTML = `<div class="video-result-media"><video controls playsinline preload="metadata" src="${escapeHtml(project.final_video.preview_url)}" aria-label="一键成片：${escapeHtml(project.title)}"></video></div><div class="video-result-detail"><div class="video-result-heading"><strong>一键成片 · ${escapeHtml(project.title)}</strong><em>含配音与字幕</em></div><small>${project.target_seconds} 秒 · ${escapeHtml(project.aspect_ratio)} · ${project.completed_shots} 个镜头</small><p>${escapeHtml(project.final_summary || '4 位执行 Agent 已完成真实制作和质检。')}</p><a href="${escapeHtml(project.final_video.download_url)}">下载完整 MP4 ↓</a></div>`;
   return card;
 }
 
@@ -1222,7 +1190,7 @@ document.querySelectorAll('.shot-card').forEach((button) => {
 });
 $('#continue-production').addEventListener('click', () => {
   const current = document.querySelector('[data-stage][aria-pressed="true"]');
-  renderProductionStage(current?.dataset.stage || 'storyboard');
+  renderProductionStage(current?.dataset.stage || 'story');
   $('#stage-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 function updateStudioProgress() {
@@ -1251,7 +1219,7 @@ async function loadVideoReadiness() {
   panel.classList.add('checking');
   mark.textContent = '…';
   title.textContent = '正在检查真实生成条件';
-  detail.textContent = '确认是否已经启用视频渠道，以及最近一次生成任务的结果。';
+  detail.textContent = '确认是否已经同时启用视频和语音渠道。';
   $('#guide-refresh-status').disabled = true;
   try {
     const result = await api('/videos/status');
@@ -1260,9 +1228,9 @@ async function loadVideoReadiness() {
     mark.textContent = result.ready ? '✓' : '!';
     title.textContent = result.ready
       ? `可以真实生成 · ${result.model}`
-      : '暂时不能真实生成 · 视频渠道未启用';
-    const audio = result.native_audio ? '该模型默认生成原生声音。' : '';
-    detail.textContent = `${audio}${latestVideoJobText(result.latest_job)}`;
+      : '暂时不能真实生成 · 视频或语音渠道未启用';
+    const audio = result.native_audio ? '原生音轨会降至背景音量，并混入独立 Speech 配音。' : '系统会混入独立 Speech 配音。';
+    detail.textContent = `${audio}中文字幕将直接烧录进画面。${latestVideoJobText(result.latest_job)}`;
     return result;
   } catch (error) {
     panel.classList.remove('checking');
@@ -1281,33 +1249,6 @@ async function showStudioGuide() {
   return loadVideoReadiness();
 }
 
-$('#approve-stage').addEventListener('click', async () => {
-  const current = document.querySelector('[data-stage][aria-pressed="true"]');
-  if (!current) return;
-  if (current.dataset.stage === 'video') {
-    const status = await showStudioGuide();
-    notify(status.ready
-      ? '视频渠道已就绪；请从知识对话向视频 Agent 提交真实镜头任务'
-      : '视频渠道尚未启用，暂时不能进入真实镜头生成');
-    return;
-  }
-  current.classList.add('done');
-  current.classList.remove('active');
-  current.querySelector('em').textContent = '已通过';
-  const stages = [...document.querySelectorAll('[data-stage]')];
-  const next = stages[stages.indexOf(current) + 1];
-  if (next) {
-    next.classList.add('active');
-    renderProductionStage(next.dataset.stage);
-    $('#stage-status').textContent = '已流转到下一关';
-    notify('总导演已接收，下一位专业 Agent 开始把关');
-  } else {
-    $('#stage-status').textContent = '八道门禁已完成';
-    notify('流程验收完成；真实项目将在这里提供终版下载');
-  }
-  updateStudioProgress();
-});
-$('#request-revision').addEventListener('click', () => notify('已创建修改意见，负责 Agent 将保留当前版本并生成新方案'));
 $('#view-deliverable').addEventListener('click', () => $('#shot-heading').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 $('#new-project').addEventListener('click', () => showDirectorStart(false));
 $('#start-director-project').addEventListener('click', () => showDirectorStart(false));
@@ -1342,7 +1283,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
     renderDirectorProject(project);
     switchWorkspace('studio');
     notify(directorOneClickMode
-      ? `一键成片已启动：9 位 Agent 将协作生成约 ${estimatedShots} 个镜头并自动合片`
+      ? `一键成片已启动：4 位执行 Agent 将生成约 ${estimatedShots} 个带配音和字幕的镜头并自动合片`
       : '导演项目已启动：总导演开始派发 8 道专业任务');
   } catch (error) {
     notify(error.message);

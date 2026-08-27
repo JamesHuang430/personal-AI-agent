@@ -317,7 +317,7 @@ button { cursor: pointer; }
 .org-director em { padding: 3px 6px; border-radius: 999px; color: #aa8fd1; background: #2a2433; font-size: 8px; font-style: normal; }
 .org-bridge { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; color: #65606f; font-size: 8px; }
 .org-bridge i { color: #856ca8; font-style: normal; }
-.org-gates { display: grid; grid-template-columns: repeat(8, minmax(62px, 1fr)); border-left: 1px solid #302d39; }
+.org-gates { display: grid; grid-template-columns: repeat(4, minmax(92px, 1fr)); border-left: 1px solid #302d39; }
 .org-gates > div { display: grid; place-items: center; align-content: center; min-height: 70px; padding: 7px 4px; border-right: 1px solid #292a34; text-align: center; }
 .org-gates > div:last-child { border-right: 0; }
 .org-gates span { width: 22px; height: 22px; display: grid; place-items: center; margin-bottom: 4px; border-radius: 6px; color: #999fad; background: #252630; font-family: Georgia, serif; font-size: 9px; }
@@ -327,7 +327,7 @@ button { cursor: pointer; }
 .org-gates em { display: block; max-width: 64px; overflow: hidden; margin-top: 3px; padding: 2px 4px; border-radius: 999px; color: #8f75b7; background: #292431; font-size: 6px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .org-gates .working { background: rgba(161,128,214,.09); box-shadow: inset 0 -2px #a784d7; }
 .org-gates .working span { color: #dbc8fa; background: #332a40; }
-.agent-pipeline { display: grid; grid-template-columns: repeat(8, minmax(104px, 1fr)); margin-bottom: 28px; border: 1px solid #282a35; background: #181922; }
+.agent-pipeline { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); margin-bottom: 28px; border: 1px solid #282a35; background: #181922; }
 .pipeline-stage { position: relative; min-height: 145px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; border: 0; border-right: 1px solid #282a35; padding: 13px; color: #747b8b; background: transparent; text-align: left; transition: .2s; }
 .pipeline-stage:last-child { border-right: 0; }
 .pipeline-stage:hover { background: #1d1f29; }

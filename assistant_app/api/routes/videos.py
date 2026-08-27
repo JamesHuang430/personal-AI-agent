@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 
 from assistant_app.api.dependencies import current_user
-from assistant_app.db.models import User, VideoChannel, VideoJob
+from assistant_app.db.models import SpeechChannel, User, VideoChannel, VideoJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.video_gateway import video_job_payload
 
@@ -54,6 +54,9 @@ async def video_generation_status(
         channel = await session.scalar(
             select(VideoChannel).where(VideoChannel.is_active.is_(True))
         )
+        speech_channel = await session.scalar(
+            select(SpeechChannel).where(SpeechChannel.is_active.is_(True))
+        )
         latest_job = await session.scalar(
             select(VideoJob)
             .where(VideoJob.user_id == user.id)
@@ -66,9 +69,11 @@ async def video_generation_status(
         and channel.model_name.casefold() == "minimax-h3"
     )
     return {
-        "ready": channel is not None,
+        "ready": channel is not None and speech_channel is not None,
         "provider": channel.provider if channel else None,
         "model": channel.model_name if channel else None,
+        "speech_ready": speech_channel is not None,
+        "speech_model": speech_channel.model_name if speech_channel else None,
         "native_audio": native_audio,
         "latest_job": video_job_payload(latest_job) if latest_job else None,
     }

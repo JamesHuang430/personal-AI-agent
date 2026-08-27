@@ -10,71 +10,42 @@ class AgentModelProfile:
     preferred_families: tuple[str, ...]
     capabilities: tuple[str, ...]
     reason: str
+    executor: str = "model"
+    runtime_name: str | None = None
 
 
 AGENT_MODEL_PROFILES = (
     AgentModelProfile(
-        "director",
-        "总导演 Agent",
+        "story",
+        "故事 Agent",
         ("deepseek", "qwen", "glm"),
         ("reasoning", "long_context"),
-        "需要全局规划、冲突判断和长上下文统筹",
+        "负责把创意收敛为受众、人物、节拍、对白和完整剧本",
     ),
     AgentModelProfile(
-        "concept",
-        "策划 Agent",
-        ("deepseek", "qwen", "glm"),
-        ("reasoning",),
-        "需要受众、钩子和商业潜力推演",
-    ),
-    AgentModelProfile(
-        "script",
-        "编剧 Agent",
-        ("deepseek", "qwen", "glm"),
-        ("reasoning", "long_context"),
-        "需要长文本结构、人物动机和对白一致性",
-    ),
-    AgentModelProfile(
-        "assets",
-        "美术 Agent",
-        ("qwen", "glm", "deepseek"),
-        ("vision",),
-        "需要识别角色、场景和道具的视觉一致性",
-    ),
-    AgentModelProfile(
-        "storyboard",
-        "分镜 Agent",
+        "visual",
+        "视觉 Agent",
         ("qwen", "glm", "deepseek"),
         ("vision", "reasoning"),
-        "需要同时理解剧本、构图和镜头连续性",
+        "负责连续性资产、分镜、视频提示词、逐镜台词和字幕",
     ),
     AgentModelProfile(
-        "video",
-        "摄影 Agent",
-        ("qwen", "glm", "deepseek"),
-        ("vision",),
-        "需要检查生成画面的主体、动作和稳定性",
-    ),
-    AgentModelProfile(
-        "audio",
-        "声音 Agent",
-        ("qwen", "glm", "deepseek"),
-        ("audio", "long_context"),
-        "需要理解对白表演、声纹和整体声场",
-    ),
-    AgentModelProfile(
-        "edit",
-        "剪辑 Agent",
-        ("qwen", "glm", "deepseek"),
-        ("vision", "long_context"),
-        "需要跨镜头理解叙事节奏和声画关系",
+        "media",
+        "媒体制作 Agent",
+        (),
+        (),
+        "实际调用视频和语音渠道，并使用 FFmpeg 混音、烧录字幕和合片",
+        executor="tool",
+        runtime_name="video+speech+ffmpeg",
     ),
     AgentModelProfile(
         "quality",
-        "监制 Agent",
-        ("deepseek", "qwen", "glm"),
-        ("reasoning", "vision"),
-        "需要执行多维质检、合规判断和问题归因",
+        "质检 Agent",
+        (),
+        (),
+        "用 ffprobe 和结构化规则验证画面、语音、字幕、时长和最终文件",
+        executor="tool",
+        runtime_name="ffprobe+quality-rules",
     ),
 )
 
@@ -125,6 +96,20 @@ def route_agent_models(available_models: list[str]) -> list[dict[str, object]]:
     unique_models = list(dict.fromkeys(item.strip() for item in available_models if item.strip()))
     assignments: list[dict[str, object]] = []
     for profile in AGENT_MODEL_PROFILES:
+        if profile.executor == "tool":
+            assignments.append(
+                {
+                    "agent": profile.key,
+                    "agent_name": profile.name,
+                    "model": profile.runtime_name,
+                    "family": "tool",
+                    "status": "tool",
+                    "reason": profile.reason,
+                    "matched_capabilities": [],
+                    "score": 0,
+                }
+            )
+            continue
         ranked = sorted(
             (
                 (_score_model(model_name, profile), model_name)
@@ -160,4 +145,3 @@ def route_agent_models(available_models: list[str]) -> list[dict[str, object]]:
             }
         )
     return assignments
-

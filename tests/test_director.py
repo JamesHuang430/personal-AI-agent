@@ -10,9 +10,12 @@ from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
     _extract_storyboard_plan,
+    _fit_speech_text,
     _shot_durations,
     _shot_prompt,
     _split_agent_output,
+    _srt_timestamp,
+    _validate_visual_data,
     create_director_project,
 )
 
@@ -68,19 +71,15 @@ def test_director_project_payload_supports_short_and_five_minute_projects() -> N
         DirectorProjectCreatePayload(premise="太短", target_seconds=120)
 
 
-def test_director_team_has_one_director_and_eight_gate_agents() -> None:
-    assert len(AGENT_MODEL_PROFILES) == 9
-    assert AGENT_MODEL_PROFILES[0].key == "director"
-    assert {profile.key for profile in AGENT_MODEL_PROFILES[1:]} == {
-        "concept",
-        "script",
-        "assets",
-        "storyboard",
-        "video",
-        "audio",
-        "edit",
+def test_director_team_has_four_executing_agents() -> None:
+    assert [profile.key for profile in AGENT_MODEL_PROFILES] == [
+        "story",
+        "visual",
+        "media",
         "quality",
-    }
+    ]
+    assert AGENT_MODEL_PROFILES[2].executor == "tool"
+    assert AGENT_MODEL_PROFILES[3].executor == "tool"
 
 
 def test_director_output_separates_visible_summary_and_deliverable() -> None:
@@ -117,7 +116,46 @@ async def test_director_project_is_flushed_before_agent_runs(
     )
 
     assert project.title == "雨夜里寻找失踪信件的女孩"
-    assert session.events == ["add_project", "flush_project", "add_runs:9"]
+    assert session.events == ["add_project", "flush_project", "add_runs:4"]
+
+
+def test_visual_plan_requires_spoken_text_and_keeps_subtitles_in_sync() -> None:
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=uuid4(),
+        title="晨露",
+        premise="小刺猬帮助萤火精灵寻找晨露",
+        target_seconds=30,
+        aspect_ratio="9:16",
+        visual_style="温暖动画",
+    )
+    data = {
+        "continuity": {
+            "characters": [{"name": "团团", "appearance": "浅棕短刺", "wardrobe": "红围巾"}]
+        },
+        "shots": [
+            {
+                "sequence": 1,
+                "title": "走入雾林",
+                "action": "团团走入雾林",
+                "positive_prompt": "远景慢降",
+                "speech_text": "闪闪，别怕，我会找到晨露。",
+                "subtitle_text": "不一致的旧字幕",
+            }
+        ],
+    }
+
+    result = _validate_visual_data(data, project, ["4"])
+
+    shot = result["shots"][0]
+    assert shot["speech_text"] == shot["subtitle_text"]
+    assert len(str(shot["speech_text"])) <= 16
+
+
+def test_speech_and_subtitle_helpers_fit_media_duration() -> None:
+    assert _fit_speech_text("  我们 一起 去找 晨露。  ", "4") == "我们一起去找晨露。"
+    assert len(_fit_speech_text("这是一句明显超过四秒容量需要被截短的对白", "4")) <= 16
+    assert _srt_timestamp(12.345) == "00:00:12,345"
 
 
 def test_storyboard_markdown_becomes_distinct_per_shot_plan() -> None:
@@ -187,7 +225,12 @@ def test_video_prompt_combines_unique_shot_with_shared_continuity() -> None:
         },
     )
     first = {"title": "进入雾林", "instruction": "团团从左侧走入雾林，远景慢降镜头"}
-    second = {"title": "发现灯笼", "instruction": "团团停步抬头，南瓜灯从树后漂出，近景慢推"}
+    second = {
+        "title": "发现灯笼",
+        "instruction": "团团停步抬头，南瓜灯从树后漂出，近景慢推",
+        "speaker": "团团",
+        "speech_text": "闪闪，你在哪里？",
+    }
 
     first_prompt = _shot_prompt(project, 1, 3, "12", first)
     second_prompt = _shot_prompt(project, 2, 3, "12", second)
@@ -195,4 +238,6 @@ def test_video_prompt_combines_unique_shot_with_shared_continuity() -> None:
     assert first_prompt != second_prompt
     assert "进入雾林" not in second_prompt
     assert "南瓜灯从树后漂出" in second_prompt
+    assert "自然、连续、与说话节奏一致" in second_prompt
+    assert "闪闪，你在哪里" in second_prompt
     assert "红围巾" in first_prompt and "红围巾" in second_prompt

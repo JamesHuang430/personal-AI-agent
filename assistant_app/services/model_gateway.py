@@ -28,8 +28,8 @@ AGENT_TOOLS = [
             "name": "start_director_production",
             "description": (
                 "用户明确要求启动导演工作室、调用总导演和各专业 Agent、制作短剧或电影时，"
-                "创建一个持久化的多 Agent 导演项目。普通模式完成预制作并生成首个预览镜头；"
-                "用户明确说一键成片时才启用批量视频生成与自动合片。"
+                "创建一个持久化导演项目。普通模式生成一个带独立配音和烧录字幕的预览镜头；"
+                "用户明确说一键成片时才逐镜生成视频与语音、烧录字幕并自动合片。"
             ),
             "parameters": {
                 "type": "object",
@@ -214,7 +214,8 @@ async def chat_completion(
                 " generate_video；明确要求主题曲、配乐或背景音乐时调用 generate_music。"
                 "用户要求启动导演工作室、调用各个 Agent、制作短剧或电影时，必须调用"
                 " start_director_production，不要只写一篇故事或口头描述流程；导演项目会自行"
-                "生成首个预览镜头，此时不要再重复调用 generate_video。用户明确说‘一键成片’"
+                "生成带独立配音和烧录字幕的首个预览镜头，此时不要再重复调用 generate_video"
+                " 或 generate_speech。用户明确说‘一键成片’"
                 "时，将 one_click 设为 true；否则必须为 false，避免未经确认批量消耗视频额度。"
                 "明确要求旁白、对白、固定声线或补配音时调用 generate_speech；普通 H3 视频"
                 "优先保留原生音轨，不要重复配音。不要声称已经生成文件、视频、语音或音乐，"

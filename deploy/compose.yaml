@@ -153,7 +153,7 @@ services:
       context: ..
       dockerfile: docker/markitdown-mcp/Dockerfile
       args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}
     image: personal-ai-assistant-markitdown-mcp:${MARKITDOWN_MCP_IMAGE_TAG:-0.0.1a4}
     expose:

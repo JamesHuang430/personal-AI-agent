@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
-ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG PIP_DEFAULT_TIMEOUT=120
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -39,6 +39,8 @@
 ## 持久化数据
 
 - `DirectorProject.quality_report`：最终技术质检报告。
+- `DirectorProject.resolution`：用户在制作时选择的 `768P` 或 `2K` 清晰度；每个
+  `VideoJob.resolution` 会固化实际提交给视频渠道的值，避免运营默认值变更影响已启动项目。
 - `DirectorAgentRun.result_data`：模型或工具阶段的结构化结果。
 - `DirectorShot.speech_job_id`：每镜对应的真实语音任务。
 - `DirectorShot.speaker/speech_text/subtitle_text`：说话人、配音和字幕正文。

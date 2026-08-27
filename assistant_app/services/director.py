@@ -40,6 +40,8 @@ AGENT_BRIEFS = {
     "quality": "检查真实媒体文件的画面、音轨、字幕、时长和可交付性",
 }
 
+DIRECTOR_RESOLUTIONS = {"768P", "2K"}
+
 SHOT_BEATS = (
     "建立独特环境、时间与空间方向",
     "主角第一次出场并展示固定外形",
@@ -72,6 +74,12 @@ SHOT_BEATS = (
 def _project_title(premise: str) -> str:
     compact = " ".join(premise.split())
     return (compact[:28] + "…") if len(compact) > 28 else (compact or "未命名短剧")
+
+
+def _director_video_size(aspect_ratio: str, resolution: str | None) -> str:
+    if resolution == "2K":
+        return "1024x1792" if aspect_ratio == "9:16" else "1792x1024"
+    return "720x1280" if aspect_ratio == "9:16" else "1280x720"
 
 
 def _split_agent_output(content: str) -> tuple[str, str]:
@@ -147,7 +155,11 @@ def _default_continuity_bible(project: DirectorProject) -> dict[str, object]:
         "lock_mode": "text",
         "characters": [],
         "relationships": [],
-        "visual_rules": [project.visual_style, f"固定画幅 {project.aspect_ratio}"],
+        "visual_rules": [
+            project.visual_style,
+            f"固定画幅 {project.aspect_ratio}",
+            f"目标清晰度 {project.resolution or '768P'}",
+        ],
         "continuity_notes": project.continuity_notes or "",
         "reference_capability": (
             "已登记定妆照时可供兼容主体参考的模型使用；当前 H3 文生视频仅执行文字连续性约束"
@@ -542,6 +554,7 @@ async def project_payload(
         "premise": project.premise,
         "target_seconds": project.target_seconds,
         "aspect_ratio": project.aspect_ratio,
+        "resolution": project.resolution or "768P",
         "visual_style": project.visual_style,
         "continuity_notes": project.continuity_notes,
         "continuity_bible": project.continuity_bible or {},
@@ -576,6 +589,7 @@ async def create_director_project(
     premise: str,
     target_seconds: int = 60,
     aspect_ratio: str = "9:16",
+    resolution: str = "768P",
     visual_style: str = "电影感写实",
     continuity_notes: str = "",
     one_click: bool = False,
@@ -595,6 +609,7 @@ async def create_director_project(
         premise=premise[:8_000],
         target_seconds=max(30, min(target_seconds, 300)),
         aspect_ratio=aspect_ratio if aspect_ratio in {"9:16", "16:9"} else "9:16",
+        resolution=resolution if resolution in DIRECTOR_RESOLUTIONS else "768P",
         visual_style=visual_style[:100],
         continuity_notes=continuity_notes[:8_000] or None,
         continuity_bible={},
@@ -923,8 +938,15 @@ async def _create_and_run_shot(
     )
     async with runtime.sessions() as session, session.begin():
         session.add(shot)
-    size = "720x1280" if project.aspect_ratio == "9:16" else "1280x720"
-    job = await create_video_job(runtime, project.user_id, shot.prompt, seconds, size)
+    size = _director_video_size(project.aspect_ratio, project.resolution)
+    job = await create_video_job(
+        runtime,
+        project.user_id,
+        shot.prompt,
+        seconds,
+        size,
+        project.resolution,
+    )
     await _update_shot(runtime, shot.id, video_job_id=job.id)
     await run_video_job(runtime, settings, job.id)
     async with runtime.sessions() as session:

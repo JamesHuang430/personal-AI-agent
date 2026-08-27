@@ -45,6 +45,11 @@ AGENT_TOOLS = [
                         "enum": ["9:16", "16:9"],
                         "description": "竖屏或横屏画幅",
                     },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["768P", "2K"],
+                        "description": "成片清晰度，默认 768P；2K 更清晰但耗时和额度更高",
+                    },
                     "visual_style": {
                         "type": "string",
                         "description": "视觉风格，默认电影感写实",
@@ -98,6 +103,7 @@ AGENT_TOOLS = [
                         "type": "string",
                         "enum": ["720x1280", "1280x720", "1024x1792", "1792x1024"],
                     },
+                    "resolution": {"type": "string", "enum": ["768P", "2K"]},
                 },
                 "required": ["prompt"],
                 "additionalProperties": False,

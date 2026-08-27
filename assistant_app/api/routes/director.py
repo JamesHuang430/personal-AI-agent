@@ -29,6 +29,7 @@ class DirectorProjectCreatePayload(BaseModel):
     premise: str = Field(min_length=4, max_length=8_000)
     target_seconds: Literal[30, 60, 180, 300] = 60
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
+    resolution: Literal["768P", "2K"] = "768P"
     visual_style: str = Field(default="电影感写实", min_length=2, max_length=100)
     continuity_notes: str = Field(default="", max_length=8_000)
     one_click: bool = False
@@ -46,12 +47,13 @@ async def start_director_project(
             request.app.state.runtime,
             request.app.state.settings,
             user.id,
-            payload.premise.strip(),
-            payload.target_seconds,
-            payload.aspect_ratio,
-            payload.visual_style.strip(),
-            payload.continuity_notes.strip(),
-            payload.one_click,
+            premise=payload.premise.strip(),
+            target_seconds=payload.target_seconds,
+            aspect_ratio=payload.aspect_ratio,
+            resolution=payload.resolution,
+            visual_style=payload.visual_style.strip(),
+            continuity_notes=payload.continuity_notes.strip(),
+            one_click=payload.one_click,
         )
     except ModelChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

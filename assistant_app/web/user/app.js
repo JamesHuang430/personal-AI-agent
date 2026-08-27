@@ -575,7 +575,7 @@ function renderArtifacts(message, result) {
   for (const job of jobs) {
     const card = document.createElement('div');
     card.className = 'artifact-card';
-    card.innerHTML = `<div><strong>▶ 视频生成任务</strong><small>排队中 · ${escapeHtml(job.seconds)} 秒 · ${escapeHtml(job.size)}</small></div><a href="#">刷新状态</a>`;
+    card.innerHTML = `<div><strong>▶ 视频生成任务</strong><small>排队中 · ${escapeHtml(job.seconds)} 秒 · ${escapeHtml(job.size)} · ${escapeHtml(job.resolution || '768P')}</small></div><a href="#">刷新状态</a>`;
     card.querySelector('a').addEventListener('click', (event) => { event.preventDefault(); pollVideoJob(job.id, card); });
     list.appendChild(card);
     window.setTimeout(() => pollVideoJob(job.id, card), 5000);
@@ -599,7 +599,7 @@ function renderArtifacts(message, result) {
   for (const project of directorProjects) {
     const card = document.createElement('div');
     card.className = 'artifact-card director-artifact';
-    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>总导演编排器 + 4 位执行 Agent · ${escapeHtml(project.aspect_ratio)} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
+    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>总导演编排器 + 4 位执行 Agent · ${escapeHtml(project.aspect_ratio)} · ${escapeHtml(project.resolution || '768P')} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
     card.querySelector('a').addEventListener('click', (event) => {
       event.preventDefault();
       switchWorkspace('studio');
@@ -660,7 +660,7 @@ async function pollVideoJob(jobId, card) {
   try {
     const job = await api(`/videos/${jobId}`);
     const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
-    card.querySelector('small').textContent = `${statusText} · ${job.seconds} 秒 · ${job.size}`;
+    card.querySelector('small').textContent = `${statusText} · ${job.seconds} 秒 · ${job.size} · ${job.resolution || '768P'}`;
     if (job.status === 'completed') {
       card.querySelector('a').textContent = '下载视频';
       card.querySelector('a').href = job.download_url;
@@ -914,7 +914,7 @@ function renderDirectorProject(project) {
   $('#production-title').textContent = project.title;
   const modeLabel = project.one_click ? '一键成片' : '逐镜制作';
   const shotProgress = project.planned_shots ? ` · ${project.completed_shots}/${project.planned_shots} 镜` : '';
-  $('#production-meta').textContent = `${project.visual_style} · ${project.aspect_ratio} · ${modeLabel} · 目标 ${project.target_seconds} 秒${shotProgress}`;
+  $('#production-meta').textContent = `${project.visual_style} · ${project.aspect_ratio} · ${project.resolution || '768P'} · ${modeLabel} · 目标 ${project.target_seconds} 秒${shotProgress}`;
   $('#director-working-badge').textContent = directorStatusLabel(project.status, project.one_click);
   $('.director-progress strong').textContent = `${project.progress}%`;
   $('.director-progress i').style.width = `${project.progress}%`;
@@ -1006,13 +1006,14 @@ function showDirectorStart(oneClick = false) {
 
 function updateDirectorModeSummary() {
   const seconds = Number($('#director-duration').value);
+  const resolution = $('#director-resolution').value;
   const estimatedShots = Math.ceil(seconds / 12);
   const panel = $('#director-start-boundary');
   panel.classList.toggle('one-click', directorOneClickMode);
   panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
   panel.querySelector('span').textContent = directorOneClickMode
-    ? `预计调用视频模型生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。定妆照仅在兼容主体参考模型时可硬锁；当前 H3 使用连续性圣经约束外貌、服装和声线，仍需终审 Agent 检查漂移。`
-    : '由 4 位执行 Agent 生成第一个带配音和字幕的 4 秒预览镜头，额度更可控。';
+    ? `预计以 ${resolution} 调用视频模型生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。2K 会增加生成耗时和额度消耗；定妆照仅在兼容主体参考模型时可硬锁，仍需质检 Agent 检查漂移。`
+    : `由 4 位执行 Agent 以 ${resolution} 生成第一个带配音和字幕的 4 秒预览镜头，额度更可控。`;
   $('#director-start-submit').textContent = directorOneClickMode ? `确认并生成约 ${estimatedShots} 个镜头` : '启动总导演编排器 + 4 位 Agent';
 }
 
@@ -1056,7 +1057,7 @@ function renderStudioVideo(job) {
   heading.className = 'video-result-heading';
   heading.innerHTML = `<strong>真实生成镜头</strong><em>${escapeHtml(videoStatusLabel(job.status))}</em>`;
   const meta = document.createElement('small');
-  meta.textContent = `${job.seconds} 秒 · ${job.size}${videoCreatedAt(job.created_at) ? ` · ${videoCreatedAt(job.created_at)}` : ''}`;
+  meta.textContent = `${job.seconds} 秒 · ${job.size} · ${job.resolution || '768P'}${videoCreatedAt(job.created_at) ? ` · ${videoCreatedAt(job.created_at)}` : ''}`;
   const prompt = document.createElement('p');
   prompt.textContent = job.prompt;
   detail.append(heading, meta, prompt);
@@ -1079,7 +1080,7 @@ function renderStudioVideo(job) {
 function renderDirectorMovie(project) {
   const card = document.createElement('article');
   card.className = 'video-result-card completed director-final-movie';
-  card.innerHTML = `<div class="video-result-media"><video controls playsinline preload="metadata" src="${escapeHtml(project.final_video.preview_url)}" aria-label="一键成片：${escapeHtml(project.title)}"></video></div><div class="video-result-detail"><div class="video-result-heading"><strong>一键成片 · ${escapeHtml(project.title)}</strong><em>含配音与字幕</em></div><small>${project.target_seconds} 秒 · ${escapeHtml(project.aspect_ratio)} · ${project.completed_shots} 个镜头</small><p>${escapeHtml(project.final_summary || '4 位执行 Agent 已完成真实制作和质检。')}</p><a href="${escapeHtml(project.final_video.download_url)}">下载完整 MP4 ↓</a></div>`;
+  card.innerHTML = `<div class="video-result-media"><video controls playsinline preload="metadata" src="${escapeHtml(project.final_video.preview_url)}" aria-label="一键成片：${escapeHtml(project.title)}"></video></div><div class="video-result-detail"><div class="video-result-heading"><strong>一键成片 · ${escapeHtml(project.title)}</strong><em>含配音与字幕</em></div><small>${project.target_seconds} 秒 · ${escapeHtml(project.aspect_ratio)} · ${escapeHtml(project.resolution || '768P')} · ${project.completed_shots} 个镜头</small><p>${escapeHtml(project.final_summary || '4 位执行 Agent 已完成真实制作和质检。')}</p><a href="${escapeHtml(project.final_video.download_url)}">下载完整 MP4 ↓</a></div>`;
   return card;
 }
 
@@ -1259,11 +1260,13 @@ $('#refresh-video-gallery').addEventListener('click', loadVideoGallery);
 $('#director-start-close').addEventListener('click', () => $('#director-start-dialog').close());
 $('#director-start-cancel').addEventListener('click', () => $('#director-start-dialog').close());
 $('#director-duration').addEventListener('change', updateDirectorModeSummary);
+$('#director-resolution').addEventListener('change', updateDirectorModeSummary);
 $('#director-start-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const seconds = Number($('#director-duration').value);
   const estimatedShots = Math.ceil(seconds / 12);
-  if (directorOneClickMode && !window.confirm(`一键成片预计生成约 ${estimatedShots} 个视频片段，会消耗 MiniMax 额度并可能需要较长时间。确认继续吗？`)) return;
+  const resolution = $('#director-resolution').value;
+  if (directorOneClickMode && !window.confirm(`一键成片将以 ${resolution} 生成约 ${estimatedShots} 个视频片段，会消耗 MiniMax 额度并可能需要较长时间。确认继续吗？`)) return;
   const button = $('#director-start-submit');
   button.disabled = true;
   button.textContent = '正在匹配 Agent 模型…';
@@ -1274,6 +1277,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
         premise: $('#director-premise').value.trim(),
         target_seconds: Number($('#director-duration').value),
         aspect_ratio: $('#director-ratio').value,
+        resolution,
         visual_style: $('#director-style').value,
         continuity_notes: $('#director-continuity-notes').value.trim(),
         one_click: directorOneClickMode,
@@ -1283,7 +1287,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
     renderDirectorProject(project);
     switchWorkspace('studio');
     notify(directorOneClickMode
-      ? `一键成片已启动：4 位执行 Agent 将生成约 ${estimatedShots} 个带配音和字幕的镜头并自动合片`
+      ? `一键成片已启动：4 位执行 Agent 将以 ${resolution} 生成约 ${estimatedShots} 个带配音和字幕的镜头并自动合片`
       : '导演项目已启动：总导演开始派发 8 道专业任务');
   } catch (error) {
     notify(error.message);

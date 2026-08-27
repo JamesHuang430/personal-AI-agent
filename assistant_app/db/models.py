@@ -259,6 +259,9 @@ class VideoJob(Base):
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
     seconds: Mapped[str] = mapped_column(String(8), nullable=False)
     size: Mapped[str] = mapped_column(String(20), nullable=False)
+    resolution: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="768P", server_default=text("'768P'")
+    )
     storage_path: Mapped[str | None] = mapped_column(String(500))
     error_message: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
@@ -280,6 +283,9 @@ class DirectorProject(Base):
     premise: Mapped[str] = mapped_column(Text, nullable=False)
     target_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     aspect_ratio: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
+    resolution: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="768P", server_default=text("'768P'")
+    )
     visual_style: Mapped[str] = mapped_column(String(100), nullable=False)
     continuity_notes: Mapped[str | None] = mapped_column(Text)
     continuity_bible: Mapped[dict[str, object]] = mapped_column(

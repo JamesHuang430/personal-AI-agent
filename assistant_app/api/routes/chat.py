@@ -264,6 +264,11 @@ async def chat(
                     str(arguments.get("prompt", payload.message)),
                     str(arguments.get("seconds")) if arguments.get("seconds") else None,
                     str(arguments.get("size")) if arguments.get("size") else None,
+                    (
+                        str(arguments.get("resolution"))
+                        if arguments.get("resolution")
+                        else None
+                    ),
                 )
                 background_tasks.add_task(
                     run_video_job,
@@ -314,16 +319,20 @@ async def chat(
                 aspect_ratio = str(arguments.get("aspect_ratio", "9:16"))
                 if aspect_ratio not in {"9:16", "16:9"}:
                     aspect_ratio = "9:16"
+                resolution = str(arguments.get("resolution", "768P"))
+                if resolution not in {"768P", "2K"}:
+                    resolution = "768P"
                 project = await create_director_project(
                     request.app.state.runtime,
                     request.app.state.settings,
                     user.id,
-                    str(arguments.get("premise", payload.message)),
-                    target_seconds,
-                    aspect_ratio,
-                    str(arguments.get("visual_style", "电影感写实")),
-                    str(arguments.get("continuity_notes", "")),
-                    bool(arguments.get("one_click", False)),
+                    premise=str(arguments.get("premise", payload.message)),
+                    target_seconds=target_seconds,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    visual_style=str(arguments.get("visual_style", "电影感写实")),
+                    continuity_notes=str(arguments.get("continuity_notes", "")),
+                    one_click=bool(arguments.get("one_click", False)),
                 )
                 background_tasks.add_task(
                     run_director_project,

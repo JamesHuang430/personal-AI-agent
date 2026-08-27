@@ -9,6 +9,7 @@ from assistant_app.core.config import Settings
 from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
+    _director_video_size,
     _extract_storyboard_plan,
     _fit_speech_text,
     _shot_durations,
@@ -54,9 +55,16 @@ def test_director_project_payload_supports_short_and_five_minute_projects() -> N
 
     assert short.target_seconds == 60
     assert short.aspect_ratio == "9:16"
+    assert short.resolution == "768P"
     assert long.target_seconds == 300
     assert long.visual_style == "温暖动画"
     assert long.one_click is False
+
+    high_resolution = DirectorProjectCreatePayload(
+        premise="一只狐狸穿过失去星光的森林",
+        resolution="2K",
+    )
+    assert high_resolution.resolution == "2K"
 
     one_click = DirectorProjectCreatePayload(
         premise="一只狐狸穿过失去星光的森林",
@@ -69,6 +77,15 @@ def test_director_project_payload_supports_short_and_five_minute_projects() -> N
 
     with pytest.raises(ValidationError):
         DirectorProjectCreatePayload(premise="太短", target_seconds=120)
+    with pytest.raises(ValidationError):
+        DirectorProjectCreatePayload(premise="雨夜公交上的一次错过", resolution="4K")
+
+
+def test_director_resolution_maps_to_orientation_aware_video_size() -> None:
+    assert _director_video_size("9:16", "768P") == "720x1280"
+    assert _director_video_size("16:9", "768P") == "1280x720"
+    assert _director_video_size("9:16", "2K") == "1024x1792"
+    assert _director_video_size("16:9", "2K") == "1792x1024"
 
 
 def test_director_team_has_four_executing_agents() -> None:
@@ -116,6 +133,7 @@ async def test_director_project_is_flushed_before_agent_runs(
     )
 
     assert project.title == "雨夜里寻找失踪信件的女孩"
+    assert project.resolution == "768P"
     assert session.events == ["add_project", "flush_project", "add_runs:4"]
 
 

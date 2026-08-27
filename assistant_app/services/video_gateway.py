@@ -18,6 +18,7 @@ from assistant_app.services.generated_files import GENERATED_ROOT
 
 VIDEO_SECONDS = {"4", "8", "12"}
 VIDEO_SIZES = {"720x1280", "1280x720", "1024x1792", "1792x1024"}
+VIDEO_RESOLUTIONS = {"768P", "2K"}
 
 
 class VideoChannelUnavailableError(RuntimeError):
@@ -48,6 +49,7 @@ async def create_video_job(
     prompt: str,
     seconds: str | None = None,
     size: str | None = None,
+    resolution: str | None = None,
 ) -> VideoJob:
     async with runtime.sessions() as session:
         channel = await session.scalar(select(VideoChannel).where(VideoChannel.is_active.is_(True)))
@@ -56,6 +58,9 @@ async def create_video_job(
 
     selected_seconds = seconds if seconds in VIDEO_SECONDS else channel.default_seconds
     selected_size = size if size in VIDEO_SIZES else channel.default_size
+    selected_resolution = (
+        resolution if resolution in VIDEO_RESOLUTIONS else channel.default_resolution
+    )
     job = VideoJob(
         id=uuid4(),
         user_id=user_id,
@@ -64,6 +69,7 @@ async def create_video_job(
         status="queued",
         seconds=selected_seconds,
         size=selected_size,
+        resolution=selected_resolution,
     )
     async with runtime.sessions() as session, session.begin():
         session.add(job)
@@ -161,7 +167,7 @@ async def _run_minimax_video(
     payload = {
         "model": channel.model_name,
         "content": [{"type": "text", "text": job.prompt}],
-        "resolution": channel.default_resolution,
+        "resolution": job.resolution,
         "duration": int(job.seconds),
         "ratio": _minimax_ratio(job.size),
     }
@@ -234,6 +240,7 @@ def video_job_payload(job: VideoJob) -> dict[str, object]:
         "status": job.status,
         "seconds": job.seconds,
         "size": job.size,
+        "resolution": job.resolution or "768P",
         "error_message": job.error_message if job.status == "failed" else None,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "download_url": (

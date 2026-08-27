@@ -82,6 +82,14 @@ def test_agent_exposes_director_video_speech_and_music_tools() -> None:
         "generate_music",
     }.issubset(tool_names)
 
+    director_tool = next(
+        tool for tool in AGENT_TOOLS if tool["function"]["name"] == "start_director_production"
+    )
+    assert director_tool["function"]["parameters"]["properties"]["resolution"]["enum"] == [
+        "768P",
+        "2K",
+    ]
+
 
 def test_completed_video_exposes_separate_preview_and_download_urls() -> None:
     job = VideoJob(
@@ -92,9 +100,11 @@ def test_completed_video_exposes_separate_preview_and_download_urls() -> None:
         status="completed",
         seconds="4",
         size="720x1280",
+        resolution="2K",
     )
 
     payload = video_job_payload(job)
 
     assert payload["preview_url"] == f"/api/v1/videos/{job.id}/preview"
     assert payload["download_url"] == f"/api/v1/videos/{job.id}/download"
+    assert payload["resolution"] == "2K"

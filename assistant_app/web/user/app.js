@@ -563,9 +563,18 @@ function renderArtifacts(message, result) {
   const musicJobs = result.music_jobs || [];
   const speechJobs = result.speech_jobs || [];
   const directorProjects = result.director_projects || [];
-  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length && !directorProjects.length) return;
+  const webSources = result.web_sources || [];
+  if (!files.length && !jobs.length && !musicJobs.length && !speechJobs.length && !directorProjects.length && !webSources.length) return;
   const list = document.createElement('div');
   list.className = 'artifact-list';
+  for (const [index, source] of webSources.entries()) {
+    const card = document.createElement('div');
+    card.className = 'artifact-card web-source-card';
+    const sourceLabel = source.source || (() => { try { return new URL(source.url).hostname; } catch { return '公开网页'; } })();
+    const date = source.date ? ` · ${source.date}` : '';
+    card.innerHTML = `<div><strong>[${index + 1}] ${escapeHtml(source.title || source.url)}</strong><small>${escapeHtml(sourceLabel)}${escapeHtml(date)}</small></div><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">查看来源 ↗</a>`;
+    list.appendChild(card);
+  }
   for (const file of files) {
     const card = document.createElement('div');
     card.className = 'artifact-card';
@@ -705,7 +714,8 @@ async function sendMessage(text) {
       signal: controller.signal,
     });
     pending.remove();
-    const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}`);
+    const webMeta = result.web_sources?.length ? ` · 联网检索 ${result.web_sources.length} 个来源` : '';
+    const responseMessage = addMessage('assistant', result.content, `${result.channel} · ${result.model}${webMeta}`);
     renderArtifacts(responseMessage, result);
     conversation.push({ role: 'assistant', content: result.content });
     currentConversationId = result.conversation_id;

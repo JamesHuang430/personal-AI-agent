@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     memory_embedding_threads: int = 2
     memory_retrieval_limit: int = 12
     memory_graph_limit: int = 200
+    web_search_enabled: bool = True
+    web_search_provider: Literal["ddgs"] = "ddgs"
+    web_search_max_results: int = Field(default=6, ge=1, le=10)
+    web_search_timeout_seconds: float = Field(default=15.0, ge=3.0, le=60.0)
+    web_fetch_max_bytes: int = Field(default=1_500_000, ge=100_000, le=5_000_000)
+    web_fetch_max_chars: int = Field(default=12_000, ge=1_000, le=30_000)
 
     @property
     def cors_origin_list(self) -> list[str]:

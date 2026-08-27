@@ -111,6 +111,8 @@ button { cursor: pointer; }
 .artifact-card small { color: #98a1b2; }
 .artifact-card a { flex: 0 0 auto; color: var(--primary); font-size: 12px; font-weight: 700; text-decoration: none; }
 .artifact-card.failed { border-color: #f0cdd1; background: #fff5f6; }
+.web-source-card { border-color: #d7e7f3; background: #f8fcff; }
+.web-source-card strong { max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-wrap { padding: 10px max(28px, calc((100% - 920px)/2)) 18px; background: linear-gradient(transparent, #f7f8fc 20%); }
 .capture-status { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 9px; align-items: center; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #dfe6e8; border-radius: 12px; background: rgba(248,255,252,.92); }
 .capture-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; color: #168f78; background: #dcf7ee; font-weight: 800; }

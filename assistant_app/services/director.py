@@ -38,6 +38,10 @@ class DirectorProjectNotFoundError(LookupError):
     pass
 
 
+class DirectorProjectNotResumableError(RuntimeError):
+    pass
+
+
 AGENT_BRIEFS = {
     "story": "把创意收敛为受众、主题、人物、节拍、可表演对白和完整剧本",
     "visual": "建立连续性资产并输出可直接驱动视频、配音和字幕的逐镜方案",
@@ -1471,3 +1475,42 @@ async def run_director_project(
             status="failed",
             error_message=f"{type(exc).__name__}: {str(exc)[:420]}",
         )
+
+
+async def prepare_director_resume(
+    runtime: RuntimeDependencies,
+    user_id: UUID,
+    project_id: UUID,
+) -> DirectorProject:
+    async with runtime.sessions() as session, session.begin():
+        project = await session.scalar(
+            select(DirectorProject)
+            .where(DirectorProject.id == project_id, DirectorProject.user_id == user_id)
+            .with_for_update()
+        )
+        if project is None:
+            raise DirectorProjectNotFoundError("导演项目不存在")
+        if project.status != "failed":
+            raise DirectorProjectNotResumableError("只有制作失败的项目可以继续制作")
+        project.status = "queued"
+        project.current_stage = "director"
+        project.progress = 2
+        project.completed_shots = 0
+        project.error_message = None
+        project.final_summary = None
+        project.quality_report = {}
+        project.updated_at = datetime.now(UTC)
+        runs = list(
+            (
+                await session.scalars(
+                    select(DirectorAgentRun).where(
+                        DirectorAgentRun.project_id == project_id
+                    )
+                )
+            ).all()
+        )
+        for run in runs:
+            run.status = "pending"
+            run.error_message = None
+            run.updated_at = datetime.now(UTC)
+    return project

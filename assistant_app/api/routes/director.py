@@ -14,9 +14,11 @@ from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import User
 from assistant_app.services.director import (
     DirectorProjectNotFoundError,
+    DirectorProjectNotResumableError,
     create_director_project,
     get_director_project,
     list_director_projects,
+    prepare_director_resume,
     project_payload,
     run_director_project,
 )
@@ -137,4 +139,30 @@ async def director_project(
         )
     except DirectorProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await project_payload(request.app.state.runtime, project)
+
+
+@router.post("/projects/{project_id}/resume", status_code=status.HTTP_202_ACCEPTED)
+async def resume_director_project(
+    project_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    try:
+        project = await prepare_director_resume(
+            request.app.state.runtime,
+            user.id,
+            project_id,
+        )
+    except DirectorProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DirectorProjectNotResumableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(
+        run_director_project,
+        request.app.state.runtime,
+        request.app.state.settings,
+        project.id,
+    )
     return await project_payload(request.app.state.runtime, project)

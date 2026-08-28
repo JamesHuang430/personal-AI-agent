@@ -9,6 +9,7 @@ from assistant_app.core.config import Settings
 from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
+    DirectorProjectNotResumableError,
     _director_video_size,
     _extract_storyboard_plan,
     _fit_speech_text,
@@ -20,6 +21,12 @@ from assistant_app.services.director import (
     _validate_visual_data,
     create_director_project,
 )
+
+
+def test_resume_error_has_clear_user_facing_message() -> None:
+    assert str(DirectorProjectNotResumableError("只有制作失败的项目可以继续制作")) == (
+        "只有制作失败的项目可以继续制作"
+    )
 
 
 class RecordingDirectorSession:

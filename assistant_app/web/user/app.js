@@ -1298,10 +1298,26 @@ document.querySelectorAll('.shot-card').forEach((button) => {
     button.classList.add('selected');
   });
 });
-$('#continue-production').addEventListener('click', () => {
-  const current = document.querySelector('[data-stage][aria-pressed="true"]');
-  renderProductionStage(current?.dataset.stage || 'story');
-  $('#stage-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+$('#continue-production').addEventListener('click', async () => {
+  if (!activeDirectorProject) return;
+  if (activeDirectorProject.status !== 'failed') {
+    notify('只有制作失败的项目需要继续制作。');
+    return;
+  }
+  const button = $('#continue-production');
+  button.disabled = true;
+  try {
+    const project = await api(`/director/projects/${activeDirectorProject.id}/resume`, {
+      method: 'POST',
+    });
+    renderDirectorProject(project);
+    notify('失败任务已重新派发，正在从导演流程继续制作。');
+    loadDirectorProject(project.id);
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 function updateStudioProgress() {
   const stages = [...document.querySelectorAll('[data-stage]')];

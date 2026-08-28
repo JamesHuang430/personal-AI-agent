@@ -11,8 +11,11 @@ from assistant_app.api.routes.admin import (
 from assistant_app.db.models import VideoJob
 from assistant_app.services.model_gateway import AGENT_TOOLS
 from assistant_app.services.speech_gateway import (
+    EDGE_FEMALE_VOICE_ID,
     SPEECH_BALANCE_MESSAGE,
     SpeechProviderError,
+    _edge_performance,
+    _edge_voice_name,
     _request_speech,
     _request_speech_with_fallback,
     _select_role_voice,
@@ -146,6 +149,13 @@ async def test_invalid_voice_retries_once_with_channel_default(
 def test_balance_error_is_actionable() -> None:
     assert "余额不足" in SPEECH_BALANCE_MESSAGE
     assert "运营后台" in SPEECH_BALANCE_MESSAGE
+
+
+def test_explicit_edge_female_voice_and_emotional_performance() -> None:
+    assert _edge_voice_name(EDGE_FEMALE_VOICE_ID) == "zh-CN-XiaoxiaoNeural"
+    assert _edge_voice_name("Chinese (Mandarin)_Sweet_Lady") is None
+    assert _edge_performance(1.0, "happy") == ("+6%", "+3Hz")
+    assert _edge_performance(1.0, "sad") == ("-8%", "-4Hz")
 
 
 @pytest.mark.asyncio

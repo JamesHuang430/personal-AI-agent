@@ -4,7 +4,10 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from assistant_app.api.routes.director import DirectorProjectCreatePayload
+from assistant_app.api.routes.director import (
+    DirectorProjectCreatePayload,
+    DirectorProjectRemasterPayload,
+)
 from assistant_app.core.config import Settings
 from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
@@ -29,6 +32,10 @@ def test_resume_error_has_clear_user_facing_message() -> None:
     assert str(DirectorProjectNotResumableError("只有制作失败的项目可以继续制作")) == (
         "只有制作失败的项目可以继续制作"
     )
+
+
+def test_remaster_defaults_to_explicit_chinese_female_voice() -> None:
+    assert DirectorProjectRemasterPayload().voice_id == "edge:zh-CN-XiaoxiaoNeural"
 
 
 class RecordingDirectorSession:

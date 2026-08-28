@@ -14,15 +14,19 @@ from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import User
 from assistant_app.services.director import (
     DirectorProjectNotFoundError,
+    DirectorProjectNotRemasterableError,
     DirectorProjectNotResumableError,
     create_director_project,
     get_director_project,
     list_director_projects,
+    prepare_director_remaster,
     prepare_director_resume,
     project_payload,
     run_director_project,
+    run_director_remaster,
 )
 from assistant_app.services.model_gateway import ModelChannelUnavailableError
+from assistant_app.services.speech_gateway import EDGE_FEMALE_VOICE_ID
 
 router = APIRouter()
 
@@ -35,6 +39,10 @@ class DirectorProjectCreatePayload(BaseModel):
     visual_style: str = Field(default="电影感写实", min_length=2, max_length=100)
     continuity_notes: str = Field(default="", max_length=8_000)
     one_click: bool = False
+
+
+class DirectorProjectRemasterPayload(BaseModel):
+    voice_id: Literal["edge:zh-CN-XiaoxiaoNeural"] = EDGE_FEMALE_VOICE_ID
 
 
 @router.post("/projects", status_code=status.HTTP_202_ACCEPTED)
@@ -164,5 +172,33 @@ async def resume_director_project(
         request.app.state.runtime,
         request.app.state.settings,
         project.id,
+    )
+    return await project_payload(request.app.state.runtime, project)
+
+
+@router.post("/projects/{project_id}/remaster", status_code=status.HTTP_202_ACCEPTED)
+async def remaster_director_project(
+    project_id: UUID,
+    payload: DirectorProjectRemasterPayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    try:
+        project = await prepare_director_remaster(
+            request.app.state.runtime,
+            user.id,
+            project_id,
+        )
+    except DirectorProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DirectorProjectNotRemasterableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(
+        run_director_remaster,
+        request.app.state.runtime,
+        request.app.state.settings,
+        project.id,
+        payload.voice_id,
     )
     return await project_payload(request.app.state.runtime, project)

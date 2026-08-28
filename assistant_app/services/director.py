@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -26,6 +27,7 @@ from assistant_app.services.agent_model_router import (
 from assistant_app.services.generated_files import GENERATED_ROOT
 from assistant_app.services.model_gateway import agent_text_completion, list_available_models
 from assistant_app.services.speech_gateway import (
+    EDGE_FEMALE_VOICE_ID,
     SPEECH_EMOTIONS,
     SPEECH_VOICE_ROLES,
     create_speech_job,
@@ -39,6 +41,10 @@ class DirectorProjectNotFoundError(LookupError):
 
 
 class DirectorProjectNotResumableError(RuntimeError):
+    pass
+
+
+class DirectorProjectNotRemasterableError(RuntimeError):
     pass
 
 
@@ -933,9 +939,13 @@ async def _render_dialogue_shot(
     video_job: VideoJob,
     speech_job: SpeechJob,
 ) -> str:
-    video_available = video_job.storage_path and await asyncio.to_thread(
-        Path(video_job.storage_path).is_file
+    original_video_path = GENERATED_ROOT / f"{video_job.id}.mp4"
+    video_source = (
+        os.fspath(original_video_path)
+        if await asyncio.to_thread(original_video_path.is_file)
+        else video_job.storage_path
     )
+    video_available = video_source and await asyncio.to_thread(Path(video_source).is_file)
     if not video_available:
         raise RuntimeError("视频渠道没有留下可合成的文件")
     speech_available = speech_job.storage_path and await asyncio.to_thread(
@@ -964,7 +974,7 @@ async def _render_dialogue_shot(
         "ffmpeg",
         "-y",
         "-i",
-        video_job.storage_path,
+        video_source,
         "-i",
         speech_job.storage_path,
         "-vf",
@@ -1528,3 +1538,163 @@ async def prepare_director_resume(
             run.error_message = None
             run.updated_at = datetime.now(UTC)
     return project
+
+
+async def prepare_director_remaster(
+    runtime: RuntimeDependencies,
+    user_id: UUID,
+    project_id: UUID,
+) -> DirectorProject:
+    async with runtime.sessions() as session, session.begin():
+        project = await session.scalar(
+            select(DirectorProject)
+            .where(DirectorProject.id == project_id, DirectorProject.user_id == user_id)
+            .with_for_update()
+        )
+        if project is None:
+            raise DirectorProjectNotFoundError("导演项目不存在")
+        if project.status != "completed" or not project.final_video_path:
+            raise DirectorProjectNotRemasterableError("只有已完成的一键成片可以重新配音")
+        shots = list(
+            (
+                await session.scalars(
+                    select(DirectorShot)
+                    .where(DirectorShot.project_id == project_id)
+                    .order_by(DirectorShot.sequence)
+                )
+            ).all()
+        )
+        if not shots or any(not shot.video_job_id or not shot.speech_text for shot in shots):
+            raise DirectorProjectNotRemasterableError("项目缺少可重制的镜头或台词")
+        project.status = "queued"
+        project.current_stage = "media"
+        project.progress = 82
+        project.error_message = None
+        project.final_summary = "正在保留原始画面的前提下重新生成配音与小号字幕。"
+        project.updated_at = datetime.now(UTC)
+    return project
+
+
+async def run_director_remaster(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    project_id: UUID,
+    voice_id: str = EDGE_FEMALE_VOICE_ID,
+) -> None:
+    backups: list[tuple[Path, Path]] = []
+    try:
+        async with runtime.sessions() as session:
+            project = await session.get(DirectorProject, project_id)
+            shots = list(
+                (
+                    await session.scalars(
+                        select(DirectorShot)
+                        .where(DirectorShot.project_id == project_id)
+                        .order_by(DirectorShot.sequence)
+                    )
+                ).all()
+            )
+            video_jobs = {
+                shot.id: await session.get(VideoJob, shot.video_job_id) for shot in shots
+            }
+            old_speech_jobs = {
+                shot.id: await session.get(SpeechJob, shot.speech_job_id) for shot in shots
+            }
+        if project is None or not shots or not project.final_video_path:
+            raise RuntimeError("导演项目缺少可重制的成片")
+
+        backup_root = GENERATED_ROOT / f"remaster-backup-{project.id}"
+        await asyncio.to_thread(backup_root.mkdir, parents=True, exist_ok=True)
+        media_paths = [Path(str(shot.rendered_path)) for shot in shots]
+        media_paths.append(Path(project.final_video_path))
+        for target in media_paths:
+            if not await asyncio.to_thread(target.is_file):
+                raise RuntimeError(f"重制前的媒体文件不存在：{target.name}")
+            backup = backup_root / target.name
+            await asyncio.to_thread(shutil.copy2, target, backup)
+            backups.append((backup, target))
+
+        await _update_project(
+            runtime,
+            project_id,
+            status="processing",
+            current_stage="media",
+            progress=84,
+        )
+        new_speech_jobs: dict[UUID, SpeechJob] = {}
+        for index, shot in enumerate(shots, start=1):
+            previous = old_speech_jobs[shot.id]
+            speech_job = await create_speech_job(
+                runtime,
+                project.user_id,
+                shot.speech_text or shot.subtitle_text or "",
+                voice_id=voice_id,
+                speed=1.0,
+                speaker=shot.speaker,
+                voice_role="adult_female",
+                emotion=previous.emotion if previous else "calm",
+            )
+            await run_speech_job(runtime, settings, speech_job.id)
+            async with runtime.sessions() as session:
+                completed = await session.get(SpeechJob, speech_job.id)
+            if completed is None or completed.status != "completed":
+                detail = completed.error_message if completed else "语音任务不存在"
+                raise RuntimeError(detail or "女声生成失败")
+            new_speech_jobs[shot.id] = completed
+            await _update_project(
+                runtime,
+                project_id,
+                progress=84 + round((index / len(shots)) * 6),
+            )
+
+        rendered_paths: dict[UUID, str] = {}
+        for shot in shots:
+            video_job = video_jobs[shot.id]
+            if video_job is None:
+                raise RuntimeError(f"第 {shot.sequence} 镜视频任务不存在")
+            rendered_paths[shot.id] = await _render_dialogue_shot(
+                shot,
+                video_job,
+                new_speech_jobs[shot.id],
+            )
+        final_path = await _concat_shots(project, shots)
+        report = await _build_quality_report(project, shots, final_path)
+        if not report["passed"]:
+            issues = "；".join(str(item) for item in report["issues"])
+            raise RuntimeError(f"女声重制质检未通过：{issues}")
+
+        async with runtime.sessions() as session, session.begin():
+            stored_project = await session.get(DirectorProject, project_id, with_for_update=True)
+            for shot in shots:
+                stored_shot = await session.get(DirectorShot, shot.id, with_for_update=True)
+                if stored_shot is None:
+                    continue
+                stored_shot.speech_job_id = new_speech_jobs[shot.id].id
+                stored_shot.rendered_path = rendered_paths[shot.id]
+                stored_shot.status = "completed"
+                stored_shot.error_message = None
+                stored_shot.updated_at = datetime.now(UTC)
+            if stored_project is not None:
+                stored_project.status = "completed"
+                stored_project.current_stage = "completed"
+                stored_project.progress = 100
+                stored_project.final_video_path = final_path
+                stored_project.quality_report = report
+                stored_project.final_summary = (
+                    "已保留原始画面，按小号字幕样式重新烧录并统一重制为中文女声配音。"
+                )
+                stored_project.error_message = None
+                stored_project.updated_at = datetime.now(UTC)
+    except Exception as exc:
+        for backup, target in backups:
+            if await asyncio.to_thread(backup.is_file):
+                await asyncio.to_thread(shutil.copy2, backup, target)
+        await _update_project(
+            runtime,
+            project_id,
+            status="completed",
+            current_stage="completed",
+            progress=100,
+            final_summary=f"女声重制失败，已保留原成片：{str(exc)[:300]}",
+            error_message=None,
+        )

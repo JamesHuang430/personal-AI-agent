@@ -29,6 +29,8 @@ class SpeechProviderError(RuntimeError):
 
 
 SPEECH_BALANCE_MESSAGE = "MiniMax 语音渠道余额不足，请充值或在运营后台切换可用语音渠道"
+EDGE_VOICE_PREFIX = "edge:"
+EDGE_FEMALE_VOICE_ID = f"{EDGE_VOICE_PREFIX}zh-CN-XiaoxiaoNeural"
 
 
 SPEECH_VOICE_ROLES = {
@@ -268,6 +270,93 @@ async def _request_speech_with_fallback(
         return result, channel.default_voice_id
 
 
+def _edge_voice_name(voice_id: str) -> str | None:
+    if not voice_id.startswith(EDGE_VOICE_PREFIX):
+        return None
+    name = voice_id.removeprefix(EDGE_VOICE_PREFIX).strip()
+    return name or None
+
+
+def _edge_performance(speed: float, emotion: str) -> tuple[str, str]:
+    rate_adjustment = {
+        "happy": 6,
+        "surprised": 5,
+        "disappointed": -6,
+        "sad": -8,
+        "devastated": -12,
+        "angry": 5,
+        "fearful": -3,
+    }.get(emotion, 0)
+    pitch = {
+        "happy": "+3Hz",
+        "surprised": "+5Hz",
+        "disappointed": "-2Hz",
+        "sad": "-4Hz",
+        "devastated": "-6Hz",
+        "angry": "+2Hz",
+        "fearful": "+3Hz",
+    }.get(emotion, "+0Hz")
+    rate = round((max(0.5, min(speed, 2.0)) - 1.0) * 100) + rate_adjustment
+    return f"{max(-50, min(rate, 100)):+d}%", pitch
+
+
+async def _save_edge_speech(
+    text: str,
+    voice_name: str,
+    rate: str,
+    pitch: str,
+    storage_path: str,
+) -> None:
+    try:
+        import edge_tts
+
+        await edge_tts.Communicate(text, voice_name, rate=rate, pitch=pitch).save(storage_path)
+    except Exception as exc:
+        raise SpeechProviderError(f"备用 Edge TTS 女声生成失败：{type(exc).__name__}") from exc
+
+
+async def _audio_duration_ms(storage_path: str) -> int | None:
+    process = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        storage_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await process.communicate()
+    if process.returncode != 0:
+        return None
+    try:
+        return round(float(stdout.decode().strip()) * 1000)
+    except ValueError:
+        return None
+
+
+async def _run_edge_speech(
+    runtime: RuntimeDependencies,
+    job: SpeechJob,
+    voice_name: str,
+) -> None:
+    await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
+    storage_path = GENERATED_ROOT / f"speech-{job.id}.mp3"
+    rate, pitch = _edge_performance(job.speed, job.emotion)
+    await _save_edge_speech(job.speech_text, voice_name, rate, pitch, str(storage_path))
+    await _update_job(
+        runtime,
+        job.id,
+        status="completed",
+        audio_format="mp3",
+        storage_path=str(storage_path),
+        duration_ms=await _audio_duration_ms(str(storage_path)),
+        error_message=None,
+    )
+
+
 async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_id: UUID) -> None:
     async with runtime.sessions() as session:
         job = await session.get(SpeechJob, job_id)
@@ -281,6 +370,10 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
     try:
         await _enforce_speech_qps(runtime, channel)
         await _update_job(runtime, job_id, status="processing")
+        edge_voice = _edge_voice_name(job.voice_id)
+        if edge_voice:
+            await _run_edge_speech(runtime, job, edge_voice)
+            return
         api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(

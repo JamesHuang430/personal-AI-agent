@@ -28,6 +28,9 @@ class SpeechProviderError(RuntimeError):
     pass
 
 
+SPEECH_BALANCE_MESSAGE = "MiniMax 语音渠道余额不足，请充值或在运营后台切换可用语音渠道"
+
+
 SPEECH_VOICE_ROLES = {
     "narrator",
     "adult_male",
@@ -236,6 +239,8 @@ async def _request_speech(
     base_resp = result.get("base_resp", {})
     if response.status_code != 200 or base_resp.get("status_code") not in {None, 0}:
         message = str(base_resp.get("status_msg", "unknown"))[:240]
+        if "insufficient balance" in message.casefold():
+            raise SpeechProviderError(SPEECH_BALANCE_MESSAGE)
         raise SpeechProviderError(
             f"MiniMax 语音接口返回 HTTP {response.status_code}：{message}"
         )

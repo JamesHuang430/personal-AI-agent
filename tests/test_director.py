@@ -9,7 +9,9 @@ from assistant_app.core.config import Settings
 from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
+    DIRECTOR_SUBTITLE_FONT_SIZE,
     DirectorProjectNotResumableError,
+    _dialogue_voice_filter,
     _director_video_size,
     _extract_storyboard_plan,
     _fit_speech_text,
@@ -238,6 +240,11 @@ def test_speech_and_subtitle_helpers_fit_media_duration() -> None:
     assert _fit_speech_text("  我们 一起 去找 晨露。  ", "4") == "我们一起去找晨露。"
     assert len(_fit_speech_text("这是一句明显超过四秒容量需要被截短的对白", "4")) <= 16
     assert _srt_timestamp(12.345) == "00:00:12,345"
+    assert DIRECTOR_SUBTITLE_FONT_SIZE == 13
+    audio_filter = _dialogue_voice_filter(10.0)
+    assert "[1:a]" in audio_filter
+    assert "amix" not in audio_filter
+    assert "[0:a]" not in audio_filter
 
 
 def test_storyboard_markdown_becomes_distinct_per_shot_plan() -> None:

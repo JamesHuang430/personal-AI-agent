@@ -11,7 +11,9 @@ from assistant_app.api.routes.admin import (
 from assistant_app.db.models import VideoJob
 from assistant_app.services.model_gateway import AGENT_TOOLS
 from assistant_app.services.speech_gateway import (
+    SPEECH_BALANCE_MESSAGE,
     SpeechProviderError,
+    _request_speech,
     _request_speech_with_fallback,
     _select_role_voice,
     _speech_performance,
@@ -139,6 +141,28 @@ async def test_invalid_voice_retries_once_with_channel_default(
     assert result["data"] == {"audio": "00"}
     assert used_voice == "male-qn-qingse"
     assert calls == ["invented_voice", "male-qn-qingse"]
+
+
+def test_balance_error_is_actionable() -> None:
+    assert "余额不足" in SPEECH_BALANCE_MESSAGE
+    assert "运营后台" in SPEECH_BALANCE_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_provider_balance_error_is_translated() -> None:
+    class BalanceClient:
+        async def post(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status_code=200,
+                content=b"{}",
+                json=lambda: {
+                    "base_resp": {"status_code": 1008, "status_msg": "insufficient balance"}
+                },
+            )
+
+    channel = SimpleNamespace(base_url="https://api.minimaxi.com")
+    with pytest.raises(SpeechProviderError, match="余额不足"):
+        await _request_speech(BalanceClient(), channel, {}, {})
 
 
 def test_agent_exposes_director_video_speech_and_music_tools() -> None:

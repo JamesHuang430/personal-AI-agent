@@ -50,6 +50,7 @@ AGENT_BRIEFS = {
 }
 
 DIRECTOR_RESOLUTIONS = {"768P", "2K"}
+DIRECTOR_SUBTITLE_FONT_SIZE = 13
 
 SHOT_BEATS = (
     "建立独特环境、时间与空间方向",
@@ -920,6 +921,13 @@ def _subtitle_filter_path(path: Path) -> str:
     return path.as_posix().replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
+def _dialogue_voice_filter(duration: float) -> str:
+    # Video providers may synthesize their own spoken audio. Mixing that track
+    # with the selected character TTS creates two simultaneous speakers, so the
+    # final dialogue track intentionally contains only the verified TTS voice.
+    return f"[1:a]aresample=48000,apad,atrim=0:{duration:.3f},volume=1.35[voice]"
+
+
 async def _render_dialogue_shot(
     shot: DirectorShot,
     video_job: VideoJob,
@@ -944,27 +952,13 @@ async def _render_dialogue_shot(
     srt = f"1\n00:00:00,000 --> {_srt_timestamp(max(0.5, duration - 0.05))}\n{subtitle}\n"
     await asyncio.to_thread(subtitle_path.write_text, srt, encoding="utf-8")
 
-    source_info = await _probe_media(video_job.storage_path)
-    streams = source_info.get("streams", [])
-    has_native_audio = isinstance(streams, list) and any(
-        isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams
-    )
     subtitle_filter = (
         f"subtitles=filename='{_subtitle_filter_path(subtitle_path)}':"
-        "force_style='FontName=Noto Sans CJK SC,FontSize=18,PrimaryColour=&H00FFFFFF,"
+        f"force_style='FontName=Noto Sans CJK SC,FontSize={DIRECTOR_SUBTITLE_FONT_SIZE},"
+        "PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=72'"
     )
-    voice_chain = f"[1:a]aresample=48000,apad,atrim=0:{duration:.3f},volume=1.35[voice]"
-    if has_native_audio:
-        audio_filter = (
-            f"[0:a]aresample=48000,volume=0.20[bed];{voice_chain};"
-            f"[bed][voice]amix=inputs=2:duration=longest:dropout_transition=1,"
-            f"apad,atrim=0:{duration:.3f}[aout]"
-        )
-        audio_map = "[aout]"
-    else:
-        audio_filter = voice_chain
-        audio_map = "[voice]"
+    voice_chain = _dialogue_voice_filter(duration)
 
     await _run_media_command(
         "ffmpeg",
@@ -976,11 +970,11 @@ async def _render_dialogue_shot(
         "-vf",
         subtitle_filter,
         "-filter_complex",
-        audio_filter,
+        voice_chain,
         "-map",
         "0:v:0",
         "-map",
-        audio_map,
+        "[voice]",
         "-t",
         f"{duration:.3f}",
         "-c:v",

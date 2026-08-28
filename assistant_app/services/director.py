@@ -25,7 +25,12 @@ from assistant_app.services.agent_model_router import (
 )
 from assistant_app.services.generated_files import GENERATED_ROOT
 from assistant_app.services.model_gateway import agent_text_completion, list_available_models
-from assistant_app.services.speech_gateway import create_speech_job, run_speech_job
+from assistant_app.services.speech_gateway import (
+    SPEECH_EMOTIONS,
+    SPEECH_VOICE_ROLES,
+    create_speech_job,
+    run_speech_job,
+)
 from assistant_app.services.video_gateway import create_video_job, run_video_job, video_job_payload
 
 
@@ -131,22 +136,97 @@ def _fit_speech_text(value: object, seconds: str) -> str:
     return candidate[: cut + 1] if cut >= limit // 2 else candidate
 
 
+def _character_for_spec(
+    spec: dict[str, object], continuity: dict[str, object]
+) -> dict[str, object] | None:
+    speaker = str(spec.get("speaker") or "").strip()
+    characters = continuity.get("characters")
+    if not isinstance(characters, list):
+        return None
+    for character in characters:
+        if isinstance(character, dict) and str(character.get("name") or "").strip() == speaker:
+            return character
+    return None
+
+
 def _voice_id_for_spec(spec: dict[str, object], continuity: dict[str, object]) -> str | None:
     explicit = str(spec.get("voice_id") or "").strip()
     if explicit:
         return explicit[:200]
-    speaker = str(spec.get("speaker") or "").strip()
-    characters = continuity.get("characters")
-    if isinstance(characters, list):
-        for character in characters:
-            if not isinstance(character, dict):
-                continue
-            if str(character.get("name") or "").strip() != speaker:
-                continue
-            voice_id = str(character.get("voice_id") or "").strip()
-            if voice_id:
-                return voice_id[:200]
+    character = _character_for_spec(spec, continuity)
+    if character is not None:
+        voice_id = str(character.get("voice_id") or "").strip()
+        if voice_id:
+            return voice_id[:200]
     return None
+
+
+def _infer_voice_role(description: str, speaker: str = "") -> str:
+    combined = f"{speaker} {description}".casefold()
+    if speaker in {"旁白", "画外音", "解说"} or any(
+        token in combined for token in ("旁白", "解说", "播音", "narrator")
+    ):
+        return "narrator"
+    is_female = any(
+        token in combined for token in ("女", "女性", "女孩", "奶奶", "婆婆", "母亲", "妈妈")
+    )
+    is_elder = any(
+        token in combined for token in ("老人", "老年", "爷爷", "奶奶", "外公", "外婆", "elder")
+    )
+    is_child = any(
+        token in combined for token in ("儿童", "小孩", "孩子", "男孩", "女孩", "少年", "少女")
+    )
+    if is_elder:
+        return "elder_female" if is_female else "elder_male"
+    if is_child:
+        return "girl" if is_female else "boy"
+    return "adult_female" if is_female else "adult_male"
+
+
+def _voice_role_for_spec(spec: dict[str, object], continuity: dict[str, object]) -> str:
+    explicit = str(spec.get("voice_role") or "").strip()
+    if explicit in SPEECH_VOICE_ROLES:
+        return explicit
+    speaker = str(spec.get("speaker") or "旁白").strip()
+    character = _character_for_spec(spec, continuity)
+    if character is None:
+        return _infer_voice_role("", speaker)
+    role = str(character.get("voice_role") or "").strip()
+    if role in SPEECH_VOICE_ROLES:
+        return role
+    description = " ".join(
+        str(character.get(key) or "") for key in ("role", "voice_profile", "appearance")
+    )
+    return _infer_voice_role(description, speaker)
+
+
+def _locked_voice_ids(notes: str | None) -> set[str]:
+    return {
+        match.strip()
+        for match in re.findall(r"voice_id\s*[:=：]\s*([^;；,，\n]+)", notes or "", re.I)
+        if match.strip()
+    }
+
+
+def _sanitize_character_voices(
+    characters: list[object], continuity_notes: str | None
+) -> None:
+    locked_ids = _locked_voice_ids(continuity_notes)
+    for item in characters:
+        if not isinstance(item, dict):
+            continue
+        voice_id = str(item.get("voice_id") or "").strip()
+        if voice_id not in locked_ids:
+            item.pop("voice_id", None)
+        role = str(item.get("voice_role") or "").strip()
+        if role not in SPEECH_VOICE_ROLES:
+            item["voice_role"] = _infer_voice_role(
+                " ".join(
+                    str(item.get(key) or "")
+                    for key in ("role", "voice_profile", "appearance")
+                ),
+                str(item.get("name") or ""),
+            )
 
 
 def _default_continuity_bible(project: DirectorProject) -> dict[str, object]:
@@ -242,6 +322,8 @@ def _fallback_shot_spec(sequence: int, total: int, premise: str) -> dict[str, ob
         "speech_text": f"{beat}。",
         "subtitle_text": f"{beat}。",
         "voice_id": None,
+        "voice_role": "narrator",
+        "emotion": "calm",
         "speech_speed": 1.0,
     }
 
@@ -292,6 +374,8 @@ def _normalize_shot_spec(
         speech_speed = max(0.5, min(float(raw.get("speech_speed") or 1.0), 2.0))
     except (TypeError, ValueError):
         speech_speed = 1.0
+    voice_role = str(raw.get("voice_role") or "").strip()
+    emotion = str(raw.get("emotion") or "calm").strip()
     return {
         "sequence": sequence,
         "title": title[:200],
@@ -301,6 +385,8 @@ def _normalize_shot_spec(
         "speech_text": speech_text,
         "subtitle_text": subtitle_text,
         "voice_id": str(raw.get("voice_id") or "").strip()[:200] or None,
+        "voice_role": voice_role if voice_role in SPEECH_VOICE_ROLES else None,
+        "emotion": emotion if emotion in SPEECH_EMOTIONS else "calm",
         "speech_speed": speech_speed,
     }
 
@@ -419,6 +505,7 @@ def _validate_visual_data(
     characters = continuity.get("characters")
     if not isinstance(characters, list) or not characters:
         raise ValueError("连续性圣经必须包含至少一个角色")
+    _sanitize_character_voices(characters, project.continuity_notes)
     raw_shots = data.get("shots")
     if not isinstance(raw_shots, list) or len(raw_shots) != len(durations):
         raise ValueError(f"视觉 JSON 必须包含正好 {len(durations)} 个镜头")
@@ -956,12 +1043,16 @@ async def _create_and_run_shot(
         await _update_shot(runtime, shot.id, status="failed", error_message=message)
         raise RuntimeError(message or "镜头生成失败")
 
+    locked_voice_id = _voice_id_for_spec(spec, continuity)
     speech_job = await create_speech_job(
         runtime,
         project.user_id,
         shot.speech_text or "",
-        _voice_id_for_spec(spec, continuity),
+        locked_voice_id,
         float(spec.get("speech_speed") or 1.0),
+        speaker=shot.speaker,
+        voice_role=None if locked_voice_id else _voice_role_for_spec(spec, continuity),
+        emotion=str(spec.get("emotion") or "calm"),
     )
     await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
     await run_speech_job(runtime, settings, speech_job.id)
@@ -1054,7 +1145,9 @@ async def _execute_agent_run(
         system_prompt += (
             "交付物末尾必须输出【故事JSON】，后接严格合法的 JSON 对象，至少包含："
             "logline、audience、theme、characters、beats、script。characters 每项包含 name、"
-            "role、appearance、wardrobe、voice_profile、voice_id；beats 是按时间顺序排列的"
+            "role、appearance、wardrobe、voice_profile、voice_role。voice_role 只能从 narrator、"
+            "adult_male、adult_female、elder_male、elder_female、boy、girl 中选择；禁止编造"
+            "voice_id；beats 是按时间顺序排列的"
             "剧情节拍；script 必须包含可表演对白，而不是只有梗概。"
         )
     else:
@@ -1062,10 +1155,15 @@ async def _execute_agent_run(
             f"你必须规划正好 {len(durations)} 个可独立生成的视频镜头，对应时长依次为"
             f" {durations} 秒。交付物末尾必须输出【视觉JSON】，后接严格合法 JSON 对象。"
             "对象必须包含 continuity 和 shots。continuity 包含 characters、relationships、"
-            "visual_rules；每个角色包含稳定的 appearance、wardrobe、voice_profile、voice_id。"
+            "visual_rules；每个角色包含稳定的 appearance、wardrobe、voice_profile、voice_role，"
+            "voice_role 只能从 narrator、adult_male、adult_female、elder_male、elder_female、"
+            "boy、girl 中选择，禁止编造 voice_id。"
             "shots 每项必须包含 sequence、title、story_beat、characters、location、action、"
             "shot_size、camera、lighting、transition、positive_prompt、negative_prompt、speaker、"
-            "speech_text、subtitle_text、voice_id、speech_speed。每一镜都必须有非空 speech_text，"
+            "speech_text、subtitle_text、voice_role、emotion、speech_speed。emotion 只能从 calm、"
+            "happy、surprised、disappointed、sad、devastated、angry、fearful 中选择。同一人物"
+            "跨镜保持 voice_role 不变，但 emotion 应根据当前表演变化。每一镜都必须有非空 "
+            "speech_text，"
             "用于真实语音生成，字幕将与 speech_text 保持完全一致。中文对白长度不得超过该镜"
             "秒数乘以 4 个汉字。不得使用“同上”省略字段。"
         )

@@ -12,6 +12,7 @@ from assistant_app.services.director import (
     _director_video_size,
     _extract_storyboard_plan,
     _fit_speech_text,
+    _sanitize_character_voices,
     _shot_durations,
     _shot_prompt,
     _split_agent_output,
@@ -168,6 +169,62 @@ def test_visual_plan_requires_spoken_text_and_keeps_subtitles_in_sync() -> None:
     shot = result["shots"][0]
     assert shot["speech_text"] == shot["subtitle_text"]
     assert len(str(shot["speech_text"])) <= 16
+
+
+def test_visual_plan_uses_stable_role_voice_and_scene_emotion() -> None:
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=uuid4(),
+        title="重逢",
+        premise="祖孙二人在车站重逢",
+        target_seconds=30,
+        aspect_ratio="9:16",
+        visual_style="写实",
+    )
+    data = {
+        "continuity": {
+            "characters": [
+                {
+                    "name": "陈爷爷",
+                    "role": "七十岁的老人",
+                    "voice_profile": "低沉温和",
+                    "voice_id": "elder_warm_01",
+                }
+            ]
+        },
+        "shots": [
+            {
+                "sequence": 1,
+                "title": "认出孙女",
+                "action": "陈爷爷惊讶地抬头",
+                "speaker": "陈爷爷",
+                "speech_text": "真的是你吗？",
+                "emotion": "surprised",
+            }
+        ],
+    }
+
+    result = _validate_visual_data(data, project, ["4"])
+
+    character = result["continuity"]["characters"][0]
+    shot = result["shots"][0]
+    assert character["voice_role"] == "elder_male"
+    assert "voice_id" not in character
+    assert shot["emotion"] == "surprised"
+
+
+def test_only_user_locked_voice_ids_survive_continuity_sanitizing() -> None:
+    characters = [
+        {"name": "林夏", "role": "成年女性", "voice_id": "verified_voice_01"},
+        {"name": "程野", "role": "成年男性", "voice_id": "invented_voice_02"},
+    ]
+
+    _sanitize_character_voices(characters, "林夏固定 voice_id=verified_voice_01；不得更换")
+
+    assert characters[0]["voice_id"] == "verified_voice_01"
+    assert characters[0]["voice_role"] == "adult_female"
+    assert "voice_id" not in characters[1]
+    assert characters[1]["voice_role"] == "adult_male"
 
 
 def test_speech_and_subtitle_helpers_fit_media_duration() -> None:

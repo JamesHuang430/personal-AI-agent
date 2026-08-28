@@ -1,4 +1,7 @@
+from types import SimpleNamespace
 from uuid import uuid4
+
+import pytest
 
 from assistant_app.api.routes.admin import (
     MusicChannelCreatePayload,
@@ -7,6 +10,12 @@ from assistant_app.api.routes.admin import (
 )
 from assistant_app.db.models import VideoJob
 from assistant_app.services.model_gateway import AGENT_TOOLS
+from assistant_app.services.speech_gateway import (
+    SpeechProviderError,
+    _request_speech_with_fallback,
+    _select_role_voice,
+    _speech_performance,
+)
 from assistant_app.services.video_gateway import (
     _minimax_ratio,
     _minimax_video_urls,
@@ -70,6 +79,66 @@ def test_speech_channel_defaults() -> None:
     assert payload.model_name == "speech-2.8-hd"
     assert payload.default_voice_id == "male-qn-qingse"
     assert payload.default_format == "mp3"
+
+
+def test_role_voice_selection_is_real_and_stable_per_character() -> None:
+    available = {
+        "Chinese (Mandarin)_Pure-hearted_Boy",
+        "Chinese (Mandarin)_Straightforward_Boy",
+        "Chinese (Mandarin)_Mature_Woman",
+    }
+
+    first = _select_role_voice("boy", "小明", available, "fallback")
+    second = _select_role_voice("boy", "小明", available, "fallback")
+    woman = _select_role_voice("adult_female", "林夏", available, "fallback")
+
+    assert first == second
+    assert first in available
+    assert woman == "Chinese (Mandarin)_Mature_Woman"
+
+
+def test_speech_28_uses_performance_tags_without_changing_subtitle_text() -> None:
+    text, speed, pitch, provider_emotion = _speech_performance(
+        "speech-2.8-hd", "你终于回来了。", 1.0, "devastated"
+    )
+
+    assert text == "(sniffs) 你终于回来了。"
+    assert speed == 0.82
+    assert pitch == -3
+    assert provider_emotion is None
+
+    legacy = _speech_performance("speech-2.6-hd", "真的吗？", 1.0, "surprised")
+    assert legacy == ("真的吗？", 1.0, 0, "surprised")
+
+
+@pytest.mark.asyncio
+async def test_invalid_voice_retries_once_with_channel_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def request(*_args: object) -> dict[str, object]:
+        payload = _args[-1]
+        assert isinstance(payload, dict)
+        voice_setting = payload["voice_setting"]
+        assert isinstance(voice_setting, dict)
+        voice_id = str(voice_setting["voice_id"])
+        calls.append(voice_id)
+        if len(calls) == 1:
+            raise SpeechProviderError("MiniMax：voice id not exist")
+        return {"data": {"audio": "00"}}
+
+    monkeypatch.setattr("assistant_app.services.speech_gateway._request_speech", request)
+    channel = SimpleNamespace(default_voice_id="male-qn-qingse")
+    payload: dict[str, object] = {"voice_setting": {"voice_id": "invented_voice"}}
+
+    result, used_voice = await _request_speech_with_fallback(
+        SimpleNamespace(), channel, {}, payload, "invented_voice"
+    )
+
+    assert result["data"] == {"audio": "00"}
+    assert used_voice == "male-qn-qingse"
+    assert calls == ["invented_voice", "male-qn-qingse"]
 
 
 def test_agent_exposes_director_video_speech_and_music_tools() -> None:

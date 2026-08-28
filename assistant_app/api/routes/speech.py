@@ -27,6 +27,9 @@ class SpeechCreatePayload(BaseModel):
     text: str = Field(min_length=1, max_length=10_000)
     voice_id: str | None = Field(default=None, max_length=200)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    speaker: str | None = Field(default=None, max_length=100)
+    voice_role: str | None = Field(default=None, max_length=32)
+    emotion: str = Field(default="calm", max_length=32)
 
 
 async def _owned_job(runtime: RuntimeDependencies, user_id: UUID, job_id: UUID) -> SpeechJob:
@@ -53,6 +56,9 @@ async def create_speech(
             payload.text.strip(),
             payload.voice_id.strip() if payload.voice_id else None,
             payload.speed,
+            speaker=payload.speaker,
+            voice_role=payload.voice_role,
+            emotion=payload.emotion,
         )
     except SpeechChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

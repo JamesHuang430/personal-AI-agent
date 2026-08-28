@@ -350,6 +350,9 @@ async def chat(
                     str(arguments.get("text", payload.message)),
                     voice_id,
                     float(arguments.get("speed", 1.0)),
+                    speaker=str(arguments.get("speaker", "")).strip() or None,
+                    voice_role=str(arguments.get("voice_role", "")).strip() or None,
+                    emotion=str(arguments.get("emotion", "calm")),
                 )
                 background_tasks.add_task(
                     run_speech_job,

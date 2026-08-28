@@ -101,7 +101,10 @@ AGENT_TOOLS = [
                     },
                     "continuity_notes": {
                         "type": "string",
-                        "description": "角色关系、外貌、服装、voice_id、定妆照 URL 等锁定信息",
+                        "description": (
+                            "角色关系、外貌、服装、年龄性别声线、定妆照 URL 等锁定信息；"
+                            "只有真实且已验证的 voice_id 才可填写"
+                        ),
                     },
                     "one_click": {
                         "type": "boolean",
@@ -169,7 +172,38 @@ AGENT_TOOLS = [
                     "text": {"type": "string", "description": "需要朗读的对白或旁白正文"},
                     "voice_id": {
                         "type": "string",
-                        "description": "可选 MiniMax voice_id；省略时使用运营后台默认声线",
+                        "description": "仅在用户明确提供真实 MiniMax voice_id 时填写；不得编造",
+                    },
+                    "speaker": {
+                        "type": "string",
+                        "description": "人物名称；同名人物会稳定使用同一音色",
+                    },
+                    "voice_role": {
+                        "type": "string",
+                        "enum": [
+                            "narrator",
+                            "adult_male",
+                            "adult_female",
+                            "elder_male",
+                            "elder_female",
+                            "boy",
+                            "girl",
+                        ],
+                        "description": "角色年龄和性别类型，用于从真实可用音色中自动选择",
+                    },
+                    "emotion": {
+                        "type": "string",
+                        "enum": [
+                            "calm",
+                            "happy",
+                            "surprised",
+                            "disappointed",
+                            "sad",
+                            "devastated",
+                            "angry",
+                            "fearful",
+                        ],
+                        "description": "当前场景的表演情绪，不改变人物本身的音色",
                     },
                     "speed": {
                         "type": "number",

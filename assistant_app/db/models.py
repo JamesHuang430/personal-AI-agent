@@ -441,6 +441,11 @@ class SpeechJob(Base):
     )
     speech_text: Mapped[str] = mapped_column(Text, nullable=False)
     voice_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    speaker: Mapped[str | None] = mapped_column(String(100))
+    voice_role: Mapped[str | None] = mapped_column(String(32))
+    emotion: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="calm", server_default=text("'calm'")
+    )
     speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
     audio_format: Mapped[str] = mapped_column(String(16), nullable=False)

@@ -1013,22 +1013,42 @@ async def _create_and_run_shot(
 ) -> tuple[DirectorShot, VideoJob]:
     continuity = project.continuity_bible or _default_continuity_bible(project)
     prompt = _shot_prompt(project, sequence, total, seconds, spec)
-    shot = DirectorShot(
-        id=uuid4(),
-        project_id=project.id,
-        user_id=project.user_id,
-        sequence=sequence,
-        title=str(spec["title"])[:200],
-        prompt=prompt,
-        seconds=seconds,
-        status="processing",
-        continuity_snapshot=continuity,
-        speaker=str(spec.get("speaker") or "旁白")[:100],
-        speech_text=_fit_speech_text(spec.get("speech_text"), seconds),
-        subtitle_text=_fit_speech_text(spec.get("speech_text"), seconds),
-    )
     async with runtime.sessions() as session, session.begin():
-        session.add(shot)
+        shot = await session.scalar(
+            select(DirectorShot)
+            .where(
+                DirectorShot.project_id == project.id,
+                DirectorShot.sequence == sequence,
+            )
+            .with_for_update()
+        )
+        if shot is None:
+            shot = DirectorShot(
+                id=uuid4(),
+                project_id=project.id,
+                user_id=project.user_id,
+                sequence=sequence,
+                title=str(spec["title"])[:200],
+                prompt=prompt,
+                seconds=seconds,
+                status="processing",
+                continuity_snapshot=continuity,
+            )
+            session.add(shot)
+        else:
+            shot.title = str(spec["title"])[:200]
+            shot.prompt = prompt
+            shot.seconds = seconds
+            shot.status = "processing"
+            shot.continuity_snapshot = continuity
+            shot.video_job_id = None
+            shot.speech_job_id = None
+            shot.rendered_path = None
+            shot.error_message = None
+        shot.speaker = str(spec.get("speaker") or "旁白")[:100]
+        shot.speech_text = _fit_speech_text(spec.get("speech_text"), seconds)
+        shot.subtitle_text = shot.speech_text
+        shot.updated_at = datetime.now(UTC)
     size = _director_video_size(project.aspect_ratio, project.resolution)
     job = await create_video_job(
         runtime,

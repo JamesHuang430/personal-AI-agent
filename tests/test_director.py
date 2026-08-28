@@ -240,7 +240,7 @@ def test_speech_and_subtitle_helpers_fit_media_duration() -> None:
     assert _fit_speech_text("  我们 一起 去找 晨露。  ", "4") == "我们一起去找晨露。"
     assert len(_fit_speech_text("这是一句明显超过四秒容量需要被截短的对白", "4")) <= 16
     assert _srt_timestamp(12.345) == "00:00:12,345"
-    assert DIRECTOR_SUBTITLE_FONT_SIZE == 13
+    assert DIRECTOR_SUBTITLE_FONT_SIZE == 9
     audio_filter = _dialogue_voice_filter(10.0)
     assert "[1:a]" in audio_filter
     assert "amix" not in audio_filter

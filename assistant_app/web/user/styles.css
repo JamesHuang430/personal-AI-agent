@@ -105,10 +105,19 @@ button { cursor: pointer; }
 .message-bubble { max-width: min(680px, 78%); padding: 12px 15px; border: 1px solid var(--line); border-radius: 4px 15px 15px 15px; background: white; box-shadow: 0 6px 20px rgba(32,40,70,.04); white-space: pre-wrap; word-break: break-word; }
 .message.user .message-bubble { order: -1; color: white; border: 0; border-radius: 15px 4px 15px 15px; background: linear-gradient(135deg, #6c5ce7, #4e7eea); }
 .message-meta { margin-top: 6px; color: #9aa3b5; font-size: 10px; }
+.chat-progress { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; min-width: min(430px, 65vw); white-space: normal; }
+.chat-progress-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: #6c5ce7; background: #eeebff; animation: chat-progress-pulse 1.7s ease-in-out infinite; }
+.chat-progress strong, .chat-progress small { display: block; }
+.chat-progress strong { color: #303a50; font-size: 12px; }
+.chat-progress small { margin-top: 2px; color: #8b95a8; font-size: 10px; }
+.chat-progress p { margin: 7px 0 0; color: #68748a; font-size: 10px; line-height: 1.55; }
+@keyframes chat-progress-pulse { 50% { opacity: .55; transform: scale(.92); } }
 .artifact-list { display: grid; gap: 8px; margin-top: 11px; }
 .artifact-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #e2e5f2; border-radius: 10px; color: #566177; background: #f8f9fd; }
 .artifact-card strong { display: block; color: #303a50; font-size: 12px; }
 .artifact-card small { color: #98a1b2; }
+.director-artifact small { display: block; margin-top: 2px; }
+.director-artifact [data-director-card-detail] { max-width: 520px; color: #758095; }
 .artifact-card a { flex: 0 0 auto; color: var(--primary); font-size: 12px; font-weight: 700; text-decoration: none; }
 .artifact-card.failed { border-color: #f0cdd1; background: #fff5f6; }
 .web-source-card { border-color: #d7e7f3; background: #f8fcff; }
@@ -411,6 +420,8 @@ button { cursor: pointer; }
 .shot-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
 .shot-card { border: 1px solid #292c36; padding: 0 0 10px; color: #898f9d; background: #171820; text-align: left; }
 .shot-card.selected { border-color: #8b70b3; box-shadow: 0 0 0 1px #8b70b3; }
+.shot-card.failed { border-color: #633940; }
+.shot-card .shot-error { margin-top: 5px; color: #cf7d88; }
 .shot-card strong, .shot-card small { display: block; padding: 0 9px; }
 .shot-card strong { margin-top: 8px; color: #c6c8d1; font-size: 10px; }
 .shot-card small { color: #626978; font-size: 8px; }

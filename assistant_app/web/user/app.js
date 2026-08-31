@@ -17,6 +17,7 @@ let activeChatController = null;
 let activeDirectorProject = null;
 let directorProjectTimer = null;
 let directorOneClickMode = false;
+let selectedDirectorStage = null;
 let selectedAttachments = [];
 let attachmentUploads = 0;
 const customModelValue = '__custom__';
@@ -578,6 +579,25 @@ function addMessage(role, content, meta = '') {
   return wrapper;
 }
 
+function startChatProgress(message, model) {
+  const bubble = message.querySelector('.message-bubble');
+  const startedAt = Date.now();
+  const phases = [
+    [0, '正在理解需求并选择执行方式'],
+    [4, '模型正在生成回复或准备工具调用'],
+    [12, '复杂任务仍在执行，请稍候'],
+  ];
+  let timer = null;
+  const render = () => {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    const phase = [...phases].reverse().find(([after]) => elapsed >= after)?.[1];
+    bubble.innerHTML = `<div class="chat-progress" role="status" aria-live="polite"><span class="chat-progress-mark">✦</span><div><strong>${escapeHtml(phase)}</strong><small>请求已提交给 ${escapeHtml(model)} · ${elapsed} 秒</small><p>完成后会展示实际工具调用、Agent 阶段、生成进度与失败原因；不展示模型的私有思维链。</p></div></div>`;
+  };
+  render();
+  timer = window.setInterval(render, 1000);
+  return () => window.clearInterval(timer);
+}
+
 function renderArtifacts(message, result) {
   const files = result.files || [];
   const documents = result.documents || [];
@@ -636,15 +656,62 @@ function renderArtifacts(message, result) {
   for (const project of directorProjects) {
     const card = document.createElement('div');
     card.className = 'artifact-card director-artifact';
-    card.innerHTML = `<div><strong>🎬 导演项目已启动</strong><small>总导演编排器 + 4 位执行 Agent · ${escapeHtml(project.aspect_ratio)} · ${escapeHtml(project.resolution || '768P')} · ${project.target_seconds} 秒</small></div><a href="#">打开工作室</a>`;
+    card.innerHTML = '<div><strong data-director-card-title>🎬 导演项目已启动</strong><small data-director-card-status>正在读取真实执行状态…</small><small data-director-card-detail></small></div><a href="#">打开工作室</a>';
     card.querySelector('a').addEventListener('click', (event) => {
       event.preventDefault();
       switchWorkspace('studio');
       loadDirectorProject(project.id);
     });
+    updateDirectorArtifactCard(project, card);
     list.appendChild(card);
+    if (['queued', 'processing'].includes(project.status)) {
+      window.setTimeout(() => pollDirectorArtifact(project.id, card), 2000);
+    }
   }
   message.querySelector('.message-bubble').appendChild(list);
+}
+
+function directorStageText(project) {
+  const active = project.agents?.find((run) => run.agent === project.current_stage);
+  if (active) return `${active.agent_name} · ${directorAgentStatusLabel(active.status)}`;
+  if (project.status === 'completed') return project.one_click ? '完整成片已交付' : '首镜预览已交付';
+  if (project.status === 'failed') {
+    const failed = project.agents?.find((run) => run.status === 'failed');
+    return failed ? `${failed.agent_name} · 需要处理` : '任务需要处理';
+  }
+  return '总导演正在派单';
+}
+
+function updateDirectorArtifactCard(project, card) {
+  const title = card.querySelector('[data-director-card-title]');
+  const status = card.querySelector('[data-director-card-status]');
+  const detail = card.querySelector('[data-director-card-detail]');
+  const shotProgress = project.planned_shots
+    ? ` · ${project.completed_shots}/${project.planned_shots} 镜`
+    : '';
+  title.textContent = project.status === 'failed'
+    ? '⚠ 导演项目需要处理'
+    : project.status === 'completed'
+      ? (project.one_click ? '🎬 完整成片已交付' : '🎬 首镜预览已完成')
+      : '🎬 导演团队正在制作';
+  status.textContent = `${project.progress}% · ${directorStageText(project)}${shotProgress}`;
+  detail.textContent = project.error_message
+    || `${project.aspect_ratio} · ${project.resolution || '768P'} · ${project.one_click ? `完整 ${project.target_seconds} 秒成片` : '4 秒首镜预览'}`;
+  card.classList.toggle('failed', project.status === 'failed');
+}
+
+async function pollDirectorArtifact(projectId, card) {
+  if (!card.isConnected) return;
+  try {
+    const project = await api(`/director/projects/${projectId}`);
+    updateDirectorArtifactCard(project, card);
+    if (['queued', 'processing'].includes(project.status)) {
+      window.setTimeout(() => pollDirectorArtifact(projectId, card), 3500);
+    }
+  } catch (error) {
+    card.classList.add('failed');
+    card.querySelector('[data-director-card-detail]').textContent = error.message;
+  }
 }
 
 async function pollSpeechJob(jobId, card) {
@@ -738,7 +805,8 @@ async function sendMessage(text) {
   const controller = new AbortController();
   activeChatController = controller;
   setChatGenerating(true);
-  const pending = addMessage('assistant', '正在思考…');
+  const pending = addMessage('assistant', '正在处理请求…');
+  const stopChatProgress = startChatProgress(pending, selectedModel);
   try {
     const result = await api('/chat', {
       method: 'POST',
@@ -783,6 +851,7 @@ async function sendMessage(text) {
       addMessage('assistant', `暂时无法回答：${error.message}`);
     }
   } finally {
+    stopChatProgress();
     if (activeChatController === controller) activeChatController = null;
     setChatGenerating(false);
     $('#chat-input').focus();
@@ -982,7 +1051,7 @@ function switchWorkspace(mode) {
 }
 
 function directorStatusLabel(status, oneClick = false) {
-  return { queued: '准备派单', processing: 'Agent 制作中', completed: oneClick ? '一键成片完成' : '预制作完成', failed: '制作失败' }[status] || status;
+  return { queued: '准备派单', processing: oneClick ? '完整成片制作中' : '首镜预览制作中', completed: oneClick ? '完整成片完成' : '首镜预览完成', failed: '制作失败' }[status] || status;
 }
 
 function directorAgentStatusLabel(status) {
@@ -993,19 +1062,41 @@ async function loadDirectorProjects() {
   if (!currentUser) return;
   try {
     const projects = await api('/director/projects');
+    renderDirectorProjectList(projects);
     if (!projects.length) return;
     if (!activeDirectorProject || !projects.some((item) => item.id === activeDirectorProject.id)) {
       renderDirectorProject(projects[0]);
+      loadVideoGallery();
     }
   } catch (error) {
     notify(error.message);
   }
 }
 
+function renderDirectorProjectList(projects) {
+  const list = $('#director-project-list');
+  if (!projects.length) {
+    list.innerHTML = '<button class="project-item" type="button" disabled><span class="project-cover">＋</span><span><strong>还没有导演项目</strong><small>从对话或工作室开始制作</small></span></button>';
+    return;
+  }
+  list.innerHTML = projects.map((project, index) => `
+    <button class="project-item ${project.id === activeDirectorProject?.id || (!activeDirectorProject && index === 0) ? 'active' : ''}" type="button" data-director-project="${escapeHtml(project.id)}">
+      <span class="project-cover">${escapeHtml(String(project.title || '片').slice(0, 1))}</span>
+      <span><strong>${escapeHtml(project.title)}</strong><small>${escapeHtml(directorStatusLabel(project.status, project.one_click))} · ${project.progress}%</small></span>
+    </button>`).join('');
+  list.querySelectorAll('[data-director-project]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedDirectorStage = null;
+      loadDirectorProject(button.dataset.directorProject);
+    });
+  });
+}
+
 async function loadDirectorProject(projectId) {
   window.clearTimeout(directorProjectTimer);
   try {
     const project = await api(`/director/projects/${projectId}`);
+    if (activeDirectorProject?.id !== project.id) selectedDirectorStage = null;
     renderDirectorProject(project);
     if (['queued', 'processing'].includes(project.status)) {
       directorProjectTimer = window.setTimeout(() => loadDirectorProject(project.id), 3500);
@@ -1021,22 +1112,36 @@ function renderDirectorProject(project) {
   activeDirectorProject = project;
   $('#production-kicker').innerHTML = `<span class="live-dot"></span> DIRECTOR PROJECT · ${escapeHtml(project.id.slice(0, 8).toUpperCase())}`;
   $('#production-title').textContent = project.title;
-  const modeLabel = project.one_click ? '一键成片' : '逐镜制作';
+  const modeLabel = project.one_click ? '完整成片' : '首镜预览';
   const shotProgress = project.planned_shots ? ` · ${project.completed_shots}/${project.planned_shots} 镜` : '';
-  $('#production-meta').textContent = `${project.visual_style} · ${project.aspect_ratio} · ${project.resolution || '768P'} · ${modeLabel} · 目标 ${project.target_seconds} 秒${shotProgress}`;
+  const scope = project.one_click
+    ? `目标 ${project.target_seconds} 秒`
+    : `成片目标 ${project.target_seconds} 秒 · 本次只交付 4 秒首镜`;
+  $('#production-meta').textContent = `${project.visual_style} · ${project.aspect_ratio} · ${project.resolution || '768P'} · ${modeLabel} · ${scope}${shotProgress}`;
   $('#director-working-badge').textContent = directorStatusLabel(project.status, project.one_click);
   $('.director-progress strong').textContent = `${project.progress}%`;
   $('.director-progress i').style.width = `${project.progress}%`;
+  $('#director-progress-label').textContent = project.one_click ? '整片制作进度' : '首镜预览任务进度';
+  $('#one-click-movie').textContent = project.one_click
+    ? '▶ 再做一版'
+    : `▶ 生成完整 ${project.target_seconds} 秒`;
 
   const directorRun = project.agents.find((run) => run.agent === 'story');
-  const activeRun = project.agents.find((run) => run.agent === project.current_stage);
+  const fallbackStage = project.agents.find((run) => run.status === 'failed')?.agent
+    || [...project.agents].reverse().find((run) => run.status === 'completed')?.agent
+    || 'story';
+  const stageKey = selectedDirectorStage
+    || (project.agents.some((run) => run.agent === project.current_stage) ? project.current_stage : fallbackStage);
+  const activeRun = project.agents.find((run) => run.agent === stageKey);
   $('#director-heading').textContent = project.status === 'completed'
-    ? (project.one_click ? '总导演已完成全片生成与合片交付' : '总导演已完成预制作与首镜交付')
+    ? (project.one_click ? '完整成片已生成并通过质检' : '首镜预览已完成，完整成片尚未生成')
     : project.status === 'failed'
       ? '导演项目暂停，需要处理失败任务'
       : `${activeRun?.agent_name || '总导演 Agent'}正在处理当前交付物`;
   $('#director-summary').textContent = project.error_message
-    || project.final_summary
+    || (project.status === 'completed' && !project.one_click
+      ? `已交付 4 秒首镜预览；要获得完整 ${project.target_seconds} 秒视频，请使用“一键成片”。`
+      : project.final_summary)
     || directorRun?.decision_summary
     || '总导演编排器正在调度 4 位执行 Agent。页面展示结构化交付和真实工具执行结果。';
 
@@ -1044,11 +1149,18 @@ function renderDirectorProject(project) {
     const run = project.agents.find((item) => item.agent === button.dataset.stage);
     button.classList.toggle('done', run?.status === 'completed');
     button.classList.toggle('active', run?.status === 'processing' || run?.status === 'failed');
-    button.setAttribute('aria-pressed', String(run?.agent === project.current_stage));
+    button.setAttribute('aria-pressed', String(run?.agent === stageKey));
     if (run) button.querySelector('em').textContent = directorAgentStatusLabel(run.status);
   });
+  document.querySelectorAll('[data-org-stage]').forEach((gate) => {
+    const run = project.agents.find((item) => item.agent === gate.dataset.orgStage);
+    gate.classList.toggle('working', ['processing', 'failed'].includes(run?.status));
+  });
 
-  const sidebarProject = document.querySelector('.project-item.active');
+  document.querySelectorAll('[data-director-project]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.directorProject === project.id);
+  });
+  const sidebarProject = document.querySelector(`[data-director-project="${project.id}"]`);
   if (sidebarProject) {
     sidebarProject.querySelector('strong').textContent = project.title;
     sidebarProject.querySelector('small').textContent = `${directorStatusLabel(project.status, project.one_click)} · ${project.progress}%`;
@@ -1056,7 +1168,7 @@ function renderDirectorProject(project) {
 
   renderContinuityBible(project);
   renderDirectorShots(project);
-  if (activeRun) renderProductionStage(activeRun.agent);
+  if (activeRun) renderProductionStage(activeRun.agent, false);
   window.clearTimeout(directorProjectTimer);
   if (['queued', 'processing'].includes(project.status)) {
     directorProjectTimer = window.setTimeout(() => loadDirectorProject(project.id), 3500);
@@ -1091,14 +1203,28 @@ function renderContinuityBible(project) {
 }
 
 function renderDirectorShots(project) {
-  if (!project.shots?.length) return;
-  $('#director-shot-strip').innerHTML = project.shots.map((shot) => `
-    <button class="shot-card ${shot.status === 'completed' ? 'approved' : shot.status === 'processing' ? 'selected' : ''}" type="button" data-video-job="${escapeHtml(shot.video?.id || '')}">
+  const strip = $('#director-shot-strip');
+  const showAll = $('#show-all-shots');
+  showAll.textContent = `查看全部 ${project.planned_shots || project.shots?.length || 0} 镜 →`;
+  if (!project.shots?.length) {
+    strip.innerHTML = '<div class="video-gallery-empty"><span>镜</span><strong>等待视觉 Agent 生成分镜</strong><small>分镜会按真实后端任务自动同步</small></div>';
+    $('#shot-heading').nextElementSibling.textContent = '尚未生成镜头';
+    return;
+  }
+  strip.innerHTML = project.shots.map((shot) => `
+    <button class="shot-card ${shot.status === 'completed' ? 'approved' : shot.status === 'processing' ? 'selected' : shot.status === 'failed' ? 'failed' : ''}" type="button" data-video-job="${escapeHtml(shot.video?.id || '')}">
       <div class="shot-frame frame-wide"><span>${shot.sequence}</span><i></i></div>
       <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}${shot.has_burned_subtitles ? ` · ${shot.native_audio ? '原生声画+字幕' : '兜底配音+字幕'}` : ''}</small>
       ${shot.speech_text ? `<small>${escapeHtml(shot.speaker || '旁白')}：${escapeHtml(shot.speech_text)}</small>` : ''}
+      ${shot.error_message ? `<small class="shot-error">${escapeHtml(shot.error_message)}</small>` : ''}
     </button>`).join('');
   $('#shot-heading').nextElementSibling.textContent = `${project.completed_shots} / ${project.planned_shots} 镜已生成`;
+  strip.querySelectorAll('.shot-card').forEach((button) => {
+    button.addEventListener('click', () => {
+      strip.querySelectorAll('.shot-card').forEach((item) => item.classList.remove('selected'));
+      button.classList.add('selected');
+    });
+  });
 }
 
 function showDirectorStart(oneClick = false) {
@@ -1108,6 +1234,17 @@ function showDirectorStart(oneClick = false) {
   $('#director-start-intro').textContent = oneClick
     ? '总导演编排器将调度 4 位执行 Agent，逐镜生成同步表演、原生声音和定时字幕，并最终合片。'
     : '总导演编排器会生成一个带同步对白、情绪声音和定时字幕的预览镜头。';
+  if (oneClick && activeDirectorProject && !activeDirectorProject.one_click) {
+    $('#director-premise').value = activeDirectorProject.premise || '';
+    $('#director-continuity-notes').value = activeDirectorProject.continuity_notes || '';
+    $('#director-duration').value = String(activeDirectorProject.target_seconds || 60);
+    $('#director-ratio').value = activeDirectorProject.aspect_ratio || '9:16';
+    $('#director-resolution').value = activeDirectorProject.resolution || '768P';
+    const styleOption = [...$('#director-style').options].find(
+      (option) => option.value === activeDirectorProject.visual_style,
+    );
+    if (styleOption) $('#director-style').value = activeDirectorProject.visual_style;
+  }
   updateDirectorModeSummary();
   $('#director-start-dialog').showModal();
   window.setTimeout(() => $('#director-premise').focus(), 80);
@@ -1208,19 +1345,31 @@ async function loadVideoGallery() {
     } catch (_error) {
       // Individual generated clips stay playable if the director project list is unavailable.
     }
-    const finalMovies = projects.filter((project) => project.final_video);
+    const currentProjectId = activeDirectorProject?.id;
+    const currentJobIds = new Set(
+      (activeDirectorProject?.shots || []).map((shot) => shot.video?.id).filter(Boolean),
+    );
+    const finalMovies = projects.filter((project) => (
+      project.final_video && (!currentProjectId || project.id === currentProjectId)
+    ));
+    const visibleJobs = (currentProjectId
+      ? jobs.filter((job) => currentJobIds.has(job.id))
+      : jobs.slice(0, 12));
     list.replaceChildren();
-    if (!jobs.length && !finalMovies.length) {
-      list.innerHTML = '<div class="video-gallery-empty"><span>▶</span><strong>还没有真实成片</strong><small>视频任务完成后会自动出现在这里</small></div>';
-      summary.textContent = '生成中的视频会自动刷新，完成后可直接播放和下载';
+    if (!visibleJobs.length && !finalMovies.length) {
+      list.innerHTML = '<div class="video-gallery-empty"><span>▶</span><strong>当前项目还没有真实视频</strong><small>媒体 Agent 提交任务后会自动出现在这里</small></div>';
+      summary.textContent = currentProjectId
+        ? '仅展示当前项目；生成后可直接播放和下载'
+        : '生成中的视频会自动刷新，完成后可直接播放和下载';
       return;
     }
 
-    const visibleJobs = jobs.slice(0, 12);
     list.append(...finalMovies.map(renderDirectorMovie), ...visibleJobs.map(renderStudioVideo));
-    const completed = jobs.filter((job) => job.status === 'completed').length;
-    const active = jobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
-    summary.textContent = `${finalMovies.length} 部合片 · ${completed} 个生成片段${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
+    const completed = visibleJobs.filter((job) => job.status === 'completed').length;
+    const active = visibleJobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
+    summary.textContent = currentProjectId
+      ? `当前项目 · ${finalMovies.length} 部合片 · ${completed}/${visibleJobs.length} 个镜头已完成${active ? ` · ${active} 条正在生成` : ''}`
+      : `${finalMovies.length} 部合片 · ${completed} 个生成片段${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
     if (active) videoGalleryTimer = window.setTimeout(loadVideoGallery, 5000);
   } catch (error) {
     list.innerHTML = `<div class="video-gallery-empty failed"><span>!</span><strong>成片记录加载失败</strong><small>${escapeHtml(error.message)}</small></div>`;
@@ -1230,7 +1379,8 @@ async function loadVideoGallery() {
   }
 }
 
-function renderProductionStage(key) {
+function renderProductionStage(key, remember = true) {
+  if (remember) selectedDirectorStage = key;
   const liveRun = activeDirectorProject?.agents.find((run) => run.agent === key);
   if (liveRun) {
     const fallback = productionStages[key];
@@ -1291,12 +1441,6 @@ document.querySelectorAll('[data-workspace]').forEach((button) => {
 });
 document.querySelectorAll('[data-stage]').forEach((button) => {
   button.addEventListener('click', () => renderProductionStage(button.dataset.stage));
-});
-document.querySelectorAll('.shot-card').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('.shot-card').forEach((item) => item.classList.remove('selected'));
-    button.classList.add('selected');
-  });
 });
 $('#continue-production').addEventListener('click', async () => {
   if (!activeDirectorProject) return;
@@ -1382,7 +1526,10 @@ $('#new-project').addEventListener('click', () => showDirectorStart(false));
 $('#start-director-project').addEventListener('click', () => showDirectorStart(false));
 $('#one-click-movie').addEventListener('click', () => showDirectorStart(true));
 $('#project-settings').addEventListener('click', () => showDirectorStart(false));
-$('#show-all-shots').addEventListener('click', () => notify('全片共 24 镜，当前展示场次 07 的关键镜头'));
+$('#show-all-shots').addEventListener('click', () => {
+  const planned = activeDirectorProject?.planned_shots || activeDirectorProject?.shots?.length || 0;
+  notify(planned ? `当前项目共 ${planned} 镜，画板已展示全部真实分镜` : '当前项目还没有生成分镜');
+});
 $('#refresh-video-gallery').addEventListener('click', loadVideoGallery);
 $('#director-start-close').addEventListener('click', () => $('#director-start-dialog').close());
 $('#director-start-cancel').addEventListener('click', () => $('#director-start-dialog').close());
@@ -1415,7 +1562,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
     switchWorkspace('studio');
     notify(directorOneClickMode
       ? `一键成片已启动：4 位执行 Agent 将以 ${resolution} 生成约 ${estimatedShots} 个带配音和字幕的镜头并自动合片`
-      : '导演项目已启动：总导演开始派发 8 道专业任务');
+      : '首镜预览已启动：总导演正在调度 4 位执行 Agent');
   } catch (error) {
     notify(error.message);
   } finally {

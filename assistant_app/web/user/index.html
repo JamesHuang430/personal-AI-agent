@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 私人 AI 助理与导演工作室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.8">
+  <link rel="stylesheet" href="/static/styles.css?v=0.9">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -95,15 +95,11 @@
       </div>
       <div id="studio-sidebar-context" class="sidebar-context hidden">
         <button id="new-project" class="new-project" type="button">＋ 新建短剧项目</button>
-        <p class="section-label">正在制作</p>
-        <div class="project-list">
-          <button class="project-item active" type="button">
-            <span class="project-cover cover-rain">雨</span>
-            <span><strong>雨停之前</strong><small>第 03 集 · 分镜中</small></span>
-          </button>
-          <button class="project-item" type="button">
-            <span class="project-cover cover-star">星</span>
-            <span><strong>星港来信</strong><small>世界观待确认</small></span>
+        <p class="section-label">导演项目</p>
+        <div id="director-project-list" class="project-list">
+          <button class="project-item" type="button" disabled>
+            <span class="project-cover">…</span>
+            <span><strong>正在读取项目</strong><small>请稍候</small></span>
           </button>
         </div>
       </div>
@@ -184,9 +180,9 @@
         <div class="studio-scroll">
           <header class="production-header">
             <div>
-              <div id="production-kicker" class="production-kicker"><span class="live-dot"></span> PRODUCTION 01 · EPISODE 03</div>
-              <h1 id="production-title">雨停之前 <span>「未寄出的告白」</span></h1>
-              <p id="production-meta">都市情感 · 竖屏 9:16 · 预计 1′42″ · 24 个镜头</p>
+              <div id="production-kicker" class="production-kicker"><span class="live-dot"></span> DIRECTOR PROJECT</div>
+              <h1 id="production-title">等待选择导演项目</h1>
+              <p id="production-meta">从对话启动完整成片，或在工作室先生成首镜预览</p>
             </div>
             <div class="production-actions">
               <button id="start-director-project" class="ghost-btn" type="button">＋ 开始制作</button>
@@ -201,10 +197,10 @@
             <div class="director-avatar"><span>总</span><i></i></div>
             <div class="director-copy">
               <div class="agent-label"><span>总导演编排器 · 4 位执行 Agent</span><span id="director-working-badge" class="working-badge">正在统筹</span></div>
-              <h2 id="director-heading">分镜叙事已通过，正在守住“错过”这一核心情绪</h2>
-              <p id="director-summary">总导演编排器负责真实调度；故事、视觉、媒体制作和质检 Agent 的产出都会被下游直接消费。</p>
+              <h2 id="director-heading">等待导演项目</h2>
+              <p id="director-summary">总导演编排器负责真实调度；故事、视觉、媒体制作和质检 Agent 的状态会在这里持续更新。</p>
             </div>
-            <div class="director-progress"><strong>42%</strong><span>整体进度</span><div><i></i></div></div>
+            <div class="director-progress"><strong>42%</strong><span id="director-progress-label">本次任务进度</span><div><i></i></div></div>
           </section>
 
           <section class="pipeline-section" aria-labelledby="pipeline-heading">
@@ -216,10 +212,10 @@
               <div class="org-director"><span>总</span><div><strong>总导演编排器</strong><small>状态机 · 调度、失败与最终决策</small><b>Python workflow</b></div><em>1 个</em></div>
               <div class="org-bridge"><span>结构化规划</span><i>→</i><span>真实生成</span><i>→</i><span>技术质检</span></div>
               <div class="org-gates">
-                <div><span>文</span><strong>故事 Agent</strong><small>人物、节拍与对白</small><em data-agent-model="story">匹配中…</em></div>
-                <div class="working"><span>镜</span><strong>视觉 Agent</strong><small>资产、分镜与字幕</small><em data-agent-model="visual">匹配中…</em></div>
-                <div><span>制</span><strong>媒体制作 Agent</strong><small>视频、语音与合成</small><em data-agent-model="media">工具执行</em></div>
-                <div><span>审</span><strong>质检 Agent</strong><small>音轨、字幕与时长</small><em data-agent-model="quality">规则质检</em></div>
+                <div data-org-stage="story"><span>文</span><strong>故事 Agent</strong><small>人物、节拍与对白</small><em data-agent-model="story">匹配中…</em></div>
+                <div data-org-stage="visual"><span>镜</span><strong>视觉 Agent</strong><small>资产、分镜与字幕</small><em data-agent-model="visual">匹配中…</em></div>
+                <div data-org-stage="media"><span>制</span><strong>媒体制作 Agent</strong><small>视频、语音与合成</small><em data-agent-model="media">工具执行</em></div>
+                <div data-org-stage="quality"><span>审</span><strong>质检 Agent</strong><small>音轨、字幕与时长</small><em data-agent-model="quality">规则质检</em></div>
               </div>
             </div>
             <div id="agent-pipeline" class="agent-pipeline" role="list" aria-label="短剧制作流程">
@@ -263,12 +259,9 @@
           </div>
 
           <section class="shot-board" aria-labelledby="shot-heading">
-            <div class="section-heading compact"><div><span class="section-index">03</span><div><h2 id="shot-heading">分镜画板</h2><p>场次 07 · 雨夜公交站 · 6 / 8 镜已确认</p></div></div><button id="show-all-shots" class="text-action" type="button">查看全部 24 镜 →</button></div>
+            <div class="section-heading compact"><div><span class="section-index">03</span><div><h2 id="shot-heading">分镜画板</h2><p>等待当前项目分镜</p></div></div><button id="show-all-shots" class="text-action" type="button">查看全部镜头 →</button></div>
             <div id="director-shot-strip" class="shot-strip">
-              <button class="shot-card approved" type="button"><div class="shot-frame frame-wide"><span>11</span><i></i></div><strong>远处的末班车</strong><small>4.0s · 缓推</small></button>
-              <button class="shot-card selected" type="button"><div class="shot-frame frame-window"><span>12</span><i></i><b></b></div><strong>车窗里的倒影</strong><small>5.5s · 侧移</small></button>
-              <button class="shot-card" type="button"><div class="shot-frame frame-letter"><span>13</span><i></i></div><strong>被雨打湿的信</strong><small>3.0s · 静止</small></button>
-              <button class="shot-card pending" type="button"><div class="shot-frame frame-pending"><span>14</span><i>等待生成</i></div><strong>隔街错身</strong><small>镜头生成未开始</small></button>
+              <div class="video-gallery-empty"><span>镜</span><strong>等待当前项目分镜</strong><small>视觉 Agent 生成后会自动同步</small></div>
             </div>
           </section>
 
@@ -384,6 +377,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=1.0" defer></script>
+  <script src="/static/app.js?v=1.2" defer></script>
 </body>
 </html>

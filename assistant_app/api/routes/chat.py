@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -62,6 +63,37 @@ from assistant_app.services.video_gateway import (
 )
 
 router = APIRouter()
+
+
+_DIRECTOR_PREVIEW_PATTERNS = (
+    r"(?:先|只)生成(?:一个|首个)?(?:预览|测试)?镜头",
+    r"(?:先看|生成)(?:一个)?预览",
+    r"逐镜确认",
+)
+_DIRECTOR_FULL_PRODUCTION_PATTERNS = (
+    r"一键成片",
+    r"(?:完整|最终)(?:成片|视频|短剧|电影)",
+    r"自动合片|合成为",
+    r"制作(?:一部|一个|一段)?.{0,12}(?:短剧|电影|视频)",
+    r"生成(?:一部|一个|一段)?.{0,12}(?:短剧|电影|视频)",
+    r"视频(?:共计|总计|总时长|时长).{0,8}(?:30|60|180|300)\s*秒",
+)
+
+
+def director_full_production_requested(
+    message: str,
+    arguments: dict[str, object],
+) -> bool:
+    """Resolve explicit full-video intent without relying on one UI phrase."""
+
+    if arguments.get("one_click") is True:
+        return True
+    normalized = re.sub(r"\s+", "", message)
+    if any(re.search(pattern, normalized) for pattern in _DIRECTOR_PREVIEW_PATTERNS):
+        return False
+    return any(
+        re.search(pattern, normalized) for pattern in _DIRECTOR_FULL_PRODUCTION_PATTERNS
+    )
 
 
 class HistoryMessage(BaseModel):
@@ -363,6 +395,10 @@ async def chat(
                 speech_jobs.append(speech_job_payload(job))
                 notices.append("语音配音任务已提交，可在对话中查看进度。")
             elif tool_call.get("name") == "start_director_production":
+                full_production = director_full_production_requested(
+                    payload.message,
+                    arguments,
+                )
                 target_seconds = int(arguments.get("target_seconds", 60))
                 if target_seconds not in {30, 60, 180, 300}:
                     target_seconds = 60
@@ -382,7 +418,7 @@ async def chat(
                     resolution=resolution,
                     visual_style=str(arguments.get("visual_style", "电影感写实")),
                     continuity_notes=str(arguments.get("continuity_notes", "")),
-                    one_click=bool(arguments.get("one_click", False)),
+                    one_click=full_production,
                 )
                 background_tasks.add_task(
                     run_director_project,
@@ -395,7 +431,7 @@ async def chat(
                 )
                 notices.append(
                     "一键成片项目已启动：4 位执行 Agent 将逐镜生成视频和语音、烧录字幕并自动合片。"
-                    if bool(arguments.get("one_click", False))
+                    if full_production
                     else "导演项目已启动：将生成一个带独立配音和烧录字幕的真实预览镜头。"
                 )
         if notices:

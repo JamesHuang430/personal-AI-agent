@@ -12,6 +12,7 @@ from assistant_app.core.config import Settings
 from assistant_app.db.models import DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
+    DIRECTOR_PREFLIGHT_MIN_SCORE,
     DIRECTOR_SUBTITLE_FONT_SIZE,
     DirectorProjectNotResumableError,
     _dialogue_voice_filter,
@@ -24,6 +25,7 @@ from assistant_app.services.director import (
     _shot_prompt,
     _split_agent_output,
     _srt_timestamp,
+    _validate_director_preflight,
     _validate_visual_data,
     create_director_project,
 )
@@ -77,6 +79,7 @@ def test_director_project_payload_supports_short_and_five_minute_projects() -> N
     assert long.target_seconds == 300
     assert long.visual_style == "温暖动画"
     assert long.one_click is False
+    assert short.story_confirmed is False
 
     high_resolution = DirectorProjectCreatePayload(
         premise="一只狐狸穿过失去星光的森林",
@@ -152,7 +155,64 @@ async def test_director_project_is_flushed_before_agent_runs(
 
     assert project.title == "雨夜里寻找失踪信件的女孩"
     assert project.resolution == "768P"
+    assert project.status == "awaiting_confirmation"
+    assert project.current_stage == "story_confirmation"
     assert session.events == ["add_project", "flush_project", "add_runs:4"]
+
+
+def test_director_preflight_requires_revised_visual_and_score_gate() -> None:
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=uuid4(),
+        title="晨露",
+        premise="小刺猬帮助萤火精灵寻找晨露",
+        target_seconds=30,
+        aspect_ratio="9:16",
+        visual_style="温暖动画",
+    )
+    visual = {
+        "continuity": {
+            "characters": [{"name": "团团", "appearance": "浅棕短刺", "wardrobe": "红围巾"}]
+        },
+        "shots": [
+            {
+                "sequence": 1,
+                "title": "发现晨露",
+                "action": "团团拨开叶片，晨露反射第一缕阳光",
+                "camera": "低机位缓慢推近",
+                "speech_text": "闪闪，我们找到了。",
+            }
+        ],
+    }
+
+    rejected = _validate_director_preflight(
+        {
+            "approved": True,
+            "score": DIRECTOR_PREFLIGHT_MIN_SCORE - 1,
+            "verdict": "仍有动作因果需要收敛",
+            "removed_irrelevant": ["无关的城市背景"],
+            "risks": ["结束构图不明确"],
+            "revised_visual": visual,
+        },
+        project,
+        ["4"],
+    )
+    approved = _validate_director_preflight(
+        {
+            "approved": True,
+            "score": DIRECTOR_PREFLIGHT_MIN_SCORE,
+            "verdict": "单镜微节拍、动作因果和结束构图均可执行",
+            "removed_irrelevant": ["无关的城市背景"],
+            "risks": [],
+            "revised_visual": visual,
+        },
+        project,
+        ["4"],
+    )
+
+    assert rejected["approved"] is False
+    assert approved["approved"] is True
+    assert approved["revised_visual"]["shots"][0]["speech_text"] == "闪闪，我们找到了。"
 
 
 def test_visual_plan_requires_spoken_text_and_keeps_subtitles_in_sync() -> None:

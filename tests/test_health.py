@@ -35,6 +35,8 @@ def test_root_serves_user_interface() -> None:
     assert 'id="one-click-movie"' in response.text
     assert 'id="director-start-form"' in response.text
     assert 'id="director-continuity-notes"' in response.text
+    assert 'id="director-confirm-story"' in response.text
+    assert 'app.js?v=1.4' in response.text
     assert 'aria-label="停止生成"' not in response.text
 
 

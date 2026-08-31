@@ -13,12 +13,14 @@ from pydantic import BaseModel, Field
 from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import User
 from assistant_app.services.director import (
+    DirectorProjectNotApprovableError,
     DirectorProjectNotFoundError,
     DirectorProjectNotRemasterableError,
     DirectorProjectNotResumableError,
     create_director_project,
     get_director_project,
     list_director_projects,
+    prepare_director_approval,
     prepare_director_remaster,
     prepare_director_resume,
     project_payload,
@@ -39,6 +41,7 @@ class DirectorProjectCreatePayload(BaseModel):
     visual_style: str = Field(default="电影感写实", min_length=2, max_length=100)
     continuity_notes: str = Field(default="", max_length=8_000)
     one_click: bool = False
+    story_confirmed: bool = False
 
 
 class DirectorProjectRemasterPayload(BaseModel):
@@ -64,6 +67,7 @@ async def start_director_project(
             visual_style=payload.visual_style.strip(),
             continuity_notes=payload.continuity_notes.strip(),
             one_click=payload.one_click,
+            story_confirmed=payload.story_confirmed,
         )
     except ModelChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -74,12 +78,13 @@ async def start_director_project(
             status_code=502,
             detail=f"文本模型渠道返回错误（HTTP {exc.status_code}）",
         ) from exc
-    background_tasks.add_task(
-        run_director_project,
-        request.app.state.runtime,
-        request.app.state.settings,
-        project.id,
-    )
+    if payload.story_confirmed:
+        background_tasks.add_task(
+            run_director_project,
+            request.app.state.runtime,
+            request.app.state.settings,
+            project.id,
+        )
     return await project_payload(request.app.state.runtime, project)
 
 
@@ -147,6 +152,32 @@ async def director_project(
         )
     except DirectorProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await project_payload(request.app.state.runtime, project)
+
+
+@router.post("/projects/{project_id}/approve", status_code=status.HTTP_202_ACCEPTED)
+async def approve_director_story(
+    project_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    try:
+        project = await prepare_director_approval(
+            request.app.state.runtime,
+            user.id,
+            project_id,
+        )
+    except DirectorProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DirectorProjectNotApprovableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(
+        run_director_project,
+        request.app.state.runtime,
+        request.app.state.settings,
+        project.id,
+    )
     return await project_payload(request.app.state.runtime, project)
 
 

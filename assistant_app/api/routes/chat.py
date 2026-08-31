@@ -22,7 +22,6 @@ from assistant_app.services.conversations import (
 from assistant_app.services.director import (
     create_director_project,
     project_payload,
-    run_director_project,
 )
 from assistant_app.services.document_skill import (
     document_skill_payload,
@@ -78,6 +77,11 @@ _DIRECTOR_FULL_PRODUCTION_PATTERNS = (
     r"生成(?:一部|一个|一段)?.{0,12}(?:短剧|电影|视频)",
     r"视频(?:共计|总计|总时长|时长).{0,8}(?:30|60|180|300)\s*秒",
 )
+_VIDEO_CONFIRMATION_PATTERNS = (
+    r"(?:提示词|分镜|方案).{0,8}(?:已确认|确认通过)",
+    r"(?:确认|同意)(?:并|后)?(?:立即|现在)?生成",
+    r"(?:立即|现在)提交视频生成",
+)
 
 
 def director_full_production_requested(
@@ -94,6 +98,11 @@ def director_full_production_requested(
     return any(
         re.search(pattern, normalized) for pattern in _DIRECTOR_FULL_PRODUCTION_PATTERNS
     )
+
+
+def video_generation_confirmed(message: str) -> bool:
+    normalized = re.sub(r"\s+", "", message)
+    return any(re.search(pattern, normalized) for pattern in _VIDEO_CONFIRMATION_PATTERNS)
 
 
 class HistoryMessage(BaseModel):
@@ -337,10 +346,18 @@ async def chat(
                 files.append(file_payload(record))
                 notices.append(f"已生成文件：{record.filename}")
             elif tool_call.get("name") == "generate_video":
+                prompt = str(arguments.get("prompt", payload.message)).strip()
+                if not video_generation_confirmed(payload.message):
+                    notices.append(
+                        "为避免误耗视频额度，本次只完成提示词准备，尚未提交视频模型。"
+                        f"待确认提示词：{prompt[:1200]}\n"
+                        "确认无误后请明确回复“提示词已确认，立即生成”。"
+                    )
+                    continue
                 job = await create_video_job(
                     request.app.state.runtime,
                     user.id,
-                    str(arguments.get("prompt", payload.message)),
+                    prompt,
                     str(arguments.get("seconds")) if arguments.get("seconds") else None,
                     str(arguments.get("size")) if arguments.get("size") else None,
                     (
@@ -419,20 +436,15 @@ async def chat(
                     visual_style=str(arguments.get("visual_style", "电影感写实")),
                     continuity_notes=str(arguments.get("continuity_notes", "")),
                     one_click=full_production,
-                )
-                background_tasks.add_task(
-                    run_director_project,
-                    request.app.state.runtime,
-                    request.app.state.settings,
-                    project.id,
+                    story_confirmed=False,
                 )
                 director_projects.append(
                     await project_payload(request.app.state.runtime, project)
                 )
                 notices.append(
-                    "一键成片项目已启动：4 位执行 Agent 将逐镜生成视频和语音、烧录字幕并自动合片。"
-                    if full_production
-                    else "导演项目已启动：将生成一个带独立配音和烧录字幕的真实预览镜头。"
+                    "导演故事草案已创建，但尚未调用任何视频模型。请到导演工作室核对故事、"
+                    "时长、画幅与风格，确认后总导演会先进行至少两轮文本预演；只有评分达到"
+                    " 90 分才会进入视频生成。"
                 )
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))

@@ -675,6 +675,7 @@ function renderArtifacts(message, result) {
 }
 
 function directorStageText(project) {
+  if (project.status === 'awaiting_confirmation') return '等待你确认故事 · 视频调用 0 次';
   const active = project.agents?.find((run) => run.agent === project.current_stage);
   if (active) return `${active.agent_name} · ${directorAgentStatusLabel(active.status)}`;
   if (project.status === 'completed') return project.one_click ? '完整成片已交付' : '首镜预览已交付';
@@ -692,13 +693,17 @@ function updateDirectorArtifactCard(project, card) {
   const shotProgress = project.planned_shots
     ? ` · ${project.completed_shots}/${project.planned_shots} 镜`
     : '';
-  title.textContent = project.status === 'failed'
+  title.textContent = project.status === 'awaiting_confirmation'
+    ? '✋ 故事等待确认'
+    : project.status === 'failed'
     ? '⚠ 导演项目需要处理'
     : project.status === 'completed'
       ? (project.one_click ? '🎬 完整成片已交付' : '🎬 首镜预览已完成')
       : '🎬 导演团队正在制作';
   status.textContent = `${project.progress}% · ${directorStageText(project)}${shotProgress}`;
-  detail.textContent = project.error_message
+  detail.textContent = project.status === 'awaiting_confirmation'
+    ? '打开导演工作室核对故事；确认前不会启动 Agent 或调用视频模型'
+    : project.error_message
     || `${project.aspect_ratio} · ${project.resolution || '768P'} · ${project.one_click ? `完整 ${project.target_seconds} 秒成片` : '4 秒首镜预览'}`;
   card.classList.toggle('failed', project.status === 'failed');
 }
@@ -1017,9 +1022,9 @@ const productionStages = {
     evidence: ['✓ 人物与动机', '✓ 时间节拍', '✓ 可表演对白'], deliverable: '故事 JSON', meta: '受众 / 主题 / 角色 / 剧本',
   },
   visual: {
-    avatar: '镜', role: '视觉 AGENT · 结构化规划', status: '等待上游',
-    title: '连续性、分镜、台词与视频提示词', summary: '逐镜方案会直接驱动视频生成、语音生成和字幕烧录。',
-    evidence: ['✓ 连续性圣经', '✓ 独立镜头提示词', '✓ 每镜语音与字幕'], deliverable: '视觉 JSON', meta: '资产 / 分镜 / speech_text',
+    avatar: '镜', role: '视觉 AGENT + 总导演 · 文本预演', status: '等待上游',
+    title: '连续性、分镜、台词与视频提示词', summary: '逐镜方案至少经过两轮总导演文本预演，评分达到 90 分才允许调用视频模型。',
+    evidence: ['✓ 连续性圣经', '✓ 清理无关提示词', '✓ 90 分视频门禁'], deliverable: '总导演审定视觉 JSON', meta: '资产 / 分镜 / speech_text / preflight',
   },
   media: {
     avatar: '制', role: '媒体制作 AGENT · 工具执行', status: '等待上游',
@@ -1073,7 +1078,7 @@ function switchWorkspace(mode) {
 }
 
 function directorStatusLabel(status, oneClick = false) {
-  return { queued: '准备派单', processing: oneClick ? '完整成片制作中' : '首镜预览制作中', completed: oneClick ? '完整成片完成' : '首镜预览完成', failed: '制作失败' }[status] || status;
+  return { awaiting_confirmation: '等待故事确认', queued: '准备派单', processing: oneClick ? '完整成片制作中' : '首镜预览制作中', completed: oneClick ? '完整成片完成' : '首镜预览完成', failed: '制作失败' }[status] || status;
 }
 
 function directorAgentStatusLabel(status) {
@@ -1156,17 +1161,27 @@ function renderDirectorProject(project) {
   const stageKey = selectedDirectorStage
     || (project.agents.some((run) => run.agent === project.current_stage) ? project.current_stage : fallbackStage);
   const activeRun = project.agents.find((run) => run.agent === stageKey);
-  $('#director-heading').textContent = project.status === 'completed'
+  $('#director-heading').textContent = project.status === 'awaiting_confirmation'
+    ? '请确认故事后再启动 Agent'
+    : project.status === 'completed'
     ? (project.one_click ? '完整成片已生成并通过质检' : '首镜预览已完成，完整成片尚未生成')
     : project.status === 'failed'
       ? '导演项目暂停，需要处理失败任务'
       : `${activeRun?.agent_name || '总导演 Agent'}正在处理当前交付物`;
-  $('#director-summary').textContent = project.error_message
+  $('#director-summary').textContent = project.status === 'awaiting_confirmation'
+    ? `待确认故事：${project.premise}。确认前不会调用文本 Agent 或视频模型。`
+    : project.error_message
     || (project.status === 'completed' && !project.one_click
       ? `已交付 4 秒首镜预览；要获得完整 ${project.target_seconds} 秒视频，请使用“一键成片”。`
       : project.final_summary)
     || directorRun?.decision_summary
     || '总导演编排器正在调度 4 位执行 Agent。页面展示结构化交付和真实工具执行结果。';
+
+  const continueButton = $('#continue-production');
+  continueButton.classList.toggle('hidden', !['awaiting_confirmation', 'failed'].includes(project.status));
+  continueButton.innerHTML = project.status === 'awaiting_confirmation'
+    ? '确认故事并开始预演 <span>→</span>'
+    : '继续制作 <span>→</span>';
 
   document.querySelectorAll('[data-stage]').forEach((button) => {
     const run = project.agents.find((item) => item.agent === button.dataset.stage);
@@ -1277,13 +1292,17 @@ function updateDirectorModeSummary() {
   const seconds = Number($('#director-duration').value);
   const resolution = $('#director-resolution').value;
   const estimatedShots = Math.ceil(seconds / 12);
+  const requireStoryConfirmation = $('#director-confirm-story').checked;
   const panel = $('#director-start-boundary');
   panel.classList.toggle('one-click', directorOneClickMode);
   panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
-  panel.querySelector('span').textContent = directorOneClickMode
-    ? `预计以 ${resolution} 调用视频模型生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。2K 会增加生成耗时和额度消耗；定妆照仅在兼容主体参考模型时可硬锁，仍需质检 Agent 检查漂移。`
-    : `由 4 位执行 Agent 以 ${resolution} 生成第一个带配音和字幕的 4 秒预览镜头，额度更可控。`;
-  $('#director-start-submit').textContent = directorOneClickMode ? `确认并生成约 ${estimatedShots} 个镜头` : '启动总导演编排器 + 4 位 Agent';
+  const generationSummary = directorOneClickMode
+    ? `通过门禁后，预计以 ${resolution} 生成约 ${estimatedShots} 个片段，再自动合成为约 ${seconds} 秒影片。`
+    : `通过门禁后，以 ${resolution} 生成第一个带配音和字幕的 4 秒预览镜头。`;
+  panel.querySelector('span').textContent = `${requireStoryConfirmation ? '先保存草案并等待你确认故事；确认后进行至少两轮文本预演，90 分才放行。' : '将立即启动文本预演，90 分才放行。'}${generationSummary}`;
+  $('#director-start-submit').textContent = requireStoryConfirmation
+    ? '保存故事并进入确认'
+    : (directorOneClickMode ? `立即预演并准备约 ${estimatedShots} 个镜头` : '立即启动总导演文本预演');
 }
 
 function videoStatusLabel(status) {
@@ -1430,6 +1449,14 @@ function renderProductionStage(key, remember = true) {
   const liveRun = activeDirectorProject?.agents.find((run) => run.agent === key);
   if (liveRun) {
     const fallback = productionStages[key];
+    const preflight = key === 'visual' ? liveRun.result_data?.director_preflight : null;
+    const preflightEvidence = preflight ? [
+      `${preflight.passed ? '✓' : '!'} 总导演门禁：${preflight.score || 0} 分 / 90 分`,
+      `✓ 文本预演：${preflight.text_model_calls || 0} 轮，视频调用：${preflight.video_model_calls || 0}`,
+      ...(preflight.removed_irrelevant?.length
+        ? [`✓ 已清理无关项：${preflight.removed_irrelevant.slice(0, 2).join('；')}`]
+        : []),
+    ] : [];
     $('#stage-avatar').textContent = fallback?.avatar || '审';
     $('#stage-role').textContent = `${liveRun.agent_name} · ${directorAgentStatusLabel(liveRun.status)}`;
     $('#stage-status').textContent = directorAgentStatusLabel(liveRun.status);
@@ -1442,6 +1469,7 @@ function renderProductionStage(key, remember = true) {
     $('#stage-evidence').replaceChildren(
       ...[
         `✓ 动态匹配模型：${liveRun.model}`,
+        ...preflightEvidence,
         '✓ 仅展示专业判断摘要，不展示隐藏思维链',
         `◌ 当前状态：${directorAgentStatusLabel(liveRun.status)}`,
       ].map((item) => {
@@ -1502,18 +1530,31 @@ document.querySelectorAll('[data-stage]').forEach((button) => {
 });
 $('#continue-production').addEventListener('click', async () => {
   if (!activeDirectorProject) return;
-  if (activeDirectorProject.status !== 'failed') {
-    notify('只有制作失败的项目需要继续制作。');
+  const awaitingConfirmation = activeDirectorProject.status === 'awaiting_confirmation';
+  if (!awaitingConfirmation && activeDirectorProject.status !== 'failed') {
+    notify('当前项目不需要确认或继续制作。');
     return;
+  }
+  if (awaitingConfirmation) {
+    const estimatedShots = activeDirectorProject.one_click
+      ? Math.ceil(activeDirectorProject.target_seconds / 12)
+      : 1;
+    const confirmed = window.confirm(
+      `请最后确认故事内容：\n\n${activeDirectorProject.premise}\n\n确认后将先进行至少两轮文本预演；只有总导演评分达到 90 分，才会以 ${activeDirectorProject.resolution} 调用视频模型生成约 ${estimatedShots} 个镜头。确认开始吗？`,
+    );
+    if (!confirmed) return;
   }
   const button = $('#continue-production');
   button.disabled = true;
   try {
-    const project = await api(`/director/projects/${activeDirectorProject.id}/resume`, {
+    const action = awaitingConfirmation ? 'approve' : 'resume';
+    const project = await api(`/director/projects/${activeDirectorProject.id}/${action}`, {
       method: 'POST',
     });
     renderDirectorProject(project);
-    notify('失败任务已重新派发，正在从导演流程继续制作。');
+    notify(awaitingConfirmation
+      ? '故事已确认。总导演正在进行文本预演；通过 90 分门禁前不会调用视频模型。'
+      : '失败任务已重新派发，正在从导演流程继续制作。');
     loadDirectorProject(project.id);
   } catch (error) {
     notify(error.message);
@@ -1593,12 +1634,14 @@ $('#director-start-close').addEventListener('click', () => $('#director-start-di
 $('#director-start-cancel').addEventListener('click', () => $('#director-start-dialog').close());
 $('#director-duration').addEventListener('change', updateDirectorModeSummary);
 $('#director-resolution').addEventListener('change', updateDirectorModeSummary);
+$('#director-confirm-story').addEventListener('change', updateDirectorModeSummary);
 $('#director-start-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const seconds = Number($('#director-duration').value);
   const estimatedShots = Math.ceil(seconds / 12);
   const resolution = $('#director-resolution').value;
-  if (directorOneClickMode && !window.confirm(`一键成片将以 ${resolution} 生成约 ${estimatedShots} 个视频片段，会消耗 MiniMax 额度并可能需要较长时间。确认继续吗？`)) return;
+  const requireStoryConfirmation = $('#director-confirm-story').checked;
+  if (!requireStoryConfirmation && directorOneClickMode && !window.confirm(`你已关闭故事确认。系统会先进行至少两轮文本预演，达到 90 分后以 ${resolution} 生成约 ${estimatedShots} 个视频片段。确认立即开始预演吗？`)) return;
   const button = $('#director-start-submit');
   button.disabled = true;
   button.textContent = '正在匹配 Agent 模型…';
@@ -1613,14 +1656,15 @@ $('#director-start-form').addEventListener('submit', async (event) => {
         visual_style: $('#director-style').value,
         continuity_notes: $('#director-continuity-notes').value.trim(),
         one_click: directorOneClickMode,
+        story_confirmed: !requireStoryConfirmation,
       }),
     });
     $('#director-start-dialog').close();
     renderDirectorProject(project);
     switchWorkspace('studio');
-    notify(directorOneClickMode
-      ? `一键成片已启动：4 位执行 Agent 将以 ${resolution} 生成约 ${estimatedShots} 个带配音和字幕的镜头并自动合片`
-      : '首镜预览已启动：总导演正在调度 4 位执行 Agent');
+    notify(requireStoryConfirmation
+      ? '故事草案已保存，尚未调用任何 Agent 或视频模型。请核对后点击“确认故事并开始预演”。'
+      : '总导演文本预演已启动；只有至少两轮复核且评分达到 90 分才会调用视频模型。');
   } catch (error) {
     notify(error.message);
   } finally {

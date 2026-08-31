@@ -49,6 +49,10 @@ class DirectorProjectNotRemasterableError(RuntimeError):
     pass
 
 
+class DirectorProjectNotApprovableError(RuntimeError):
+    pass
+
+
 AGENT_BRIEFS = {
     "story": "把创意收敛为受众、主题、人物、节拍、可表演对白和完整剧本",
     "visual": "建立连续性资产并输出可直接驱动视频、配音和字幕的逐镜方案",
@@ -58,6 +62,8 @@ AGENT_BRIEFS = {
 
 DIRECTOR_RESOLUTIONS = {"768P", "2K"}
 DIRECTOR_SUBTITLE_FONT_SIZE = 9
+DIRECTOR_PREFLIGHT_MIN_SCORE = 90
+DIRECTOR_PREFLIGHT_MAX_ATTEMPTS = 3
 
 VOICE_ROLE_DIRECTIONS = {
     "narrator": "稳定、清晰、有叙事感的画外旁白",
@@ -610,6 +616,39 @@ def _validate_visual_data(
     return {"continuity": continuity, "shots": normalized}
 
 
+def _validate_director_preflight(
+    data: dict[str, object],
+    project: DirectorProject,
+    durations: list[str],
+) -> dict[str, object]:
+    try:
+        score = int(data.get("score", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("总导演预演 score 必须是整数") from exc
+    if not 0 <= score <= 100:
+        raise ValueError("总导演预演 score 必须在 0 到 100 之间")
+    verdict = str(data.get("verdict") or "").strip()
+    if not verdict:
+        raise ValueError("总导演预演缺少 verdict")
+    removed = data.get("removed_irrelevant", [])
+    risks = data.get("risks", [])
+    if not isinstance(removed, list) or not isinstance(risks, list):
+        raise ValueError("总导演预演的 removed_irrelevant 与 risks 必须是数组")
+    revised = data.get("revised_visual")
+    if not isinstance(revised, dict):
+        raise ValueError("总导演预演缺少 revised_visual")
+    validated_visual = _validate_visual_data(revised, project, durations)
+    approved = bool(data.get("approved")) and score >= DIRECTOR_PREFLIGHT_MIN_SCORE
+    return {
+        "approved": approved,
+        "score": score,
+        "verdict": verdict[:1200],
+        "removed_irrelevant": [str(item)[:500] for item in removed[:20]],
+        "risks": [str(item)[:500] for item in risks[:20]],
+        "revised_visual": validated_visual,
+    }
+
+
 def _shot_prompt(
     project: DirectorProject,
     sequence: int,
@@ -740,6 +779,9 @@ async def project_payload(
                 )
             ).all()
         }
+    visual_run = next((run for run in runs if run.agent_key == "visual"), None)
+    visual_data = dict(visual_run.result_data or {}) if visual_run else {}
+    director_preflight = dict(visual_data.get("director_preflight") or {})
     return {
         "id": str(project.id),
         "title": project.title,
@@ -754,10 +796,12 @@ async def project_payload(
         "planned_shots": project.planned_shots,
         "completed_shots": project.completed_shots,
         "status": project.status,
+        "story_confirmed": project.status != "awaiting_confirmation",
         "current_stage": project.current_stage,
         "progress": project.progress,
         "final_summary": project.final_summary,
         "quality_report": project.quality_report or {},
+        "director_preflight": director_preflight,
         "error_message": project.error_message if project.status == "failed" else None,
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "agents": [agent_run_payload(run) for run in runs],
@@ -785,6 +829,7 @@ async def create_director_project(
     visual_style: str = "电影感写实",
     continuity_notes: str = "",
     one_click: bool = False,
+    story_confirmed: bool = False,
 ) -> DirectorProject:
     _channel_name, models = await list_available_models(runtime, settings)
     assignments = {item["agent"]: item for item in route_agent_models(models)}
@@ -807,8 +852,14 @@ async def create_director_project(
         continuity_bible={},
         one_click=one_click,
         planned_shots=len(_shot_durations(target_seconds)) if one_click else 1,
-        status="queued",
+        status="queued" if story_confirmed else "awaiting_confirmation",
+        current_stage="director" if story_confirmed else "story_confirmation",
         progress=0,
+        final_summary=(
+            "故事内容已由用户确认，等待总导演派单。"
+            if story_confirmed
+            else "故事草案已保存；尚未调用任何视频模型，等待用户确认后开始预演。"
+        ),
     )
     runs = [
         DirectorAgentRun(
@@ -831,6 +882,30 @@ async def create_director_project(
         # before the project insert on PostgreSQL.
         await session.flush()
         session.add_all(runs)
+    return project
+
+
+async def prepare_director_approval(
+    runtime: RuntimeDependencies,
+    user_id: UUID,
+    project_id: UUID,
+) -> DirectorProject:
+    async with runtime.sessions() as session, session.begin():
+        project = await session.scalar(
+            select(DirectorProject)
+            .where(DirectorProject.id == project_id, DirectorProject.user_id == user_id)
+            .with_for_update()
+        )
+        if project is None:
+            raise DirectorProjectNotFoundError("导演项目不存在")
+        if project.status != "awaiting_confirmation":
+            raise DirectorProjectNotApprovableError("只有等待故事确认的项目可以开始制作")
+        project.status = "queued"
+        project.current_stage = "director"
+        project.progress = 1
+        project.final_summary = "故事内容已由用户确认，总导演即将开始文本预演。"
+        project.error_message = None
+        project.updated_at = datetime.now(UTC)
     return project
 
 
@@ -1468,6 +1543,138 @@ async def _execute_agent_run(
     )
 
 
+async def _run_director_preflight(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    project: DirectorProject,
+    story_run: DirectorAgentRun,
+    visual_run: DirectorAgentRun,
+) -> dict[str, object]:
+    """Run at least two text-only director passes before any video job is created."""
+
+    durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+    candidate = _validate_visual_data(dict(visual_run.result_data or {}), project, durations)
+    story_data = dict(story_run.result_data or {})
+    attempts: list[dict[str, object]] = []
+    last_report: dict[str, object] | None = None
+    feedback = ""
+    await _update_project(
+        runtime,
+        project.id,
+        current_stage="director",
+        progress=32,
+        final_summary="总导演正在进行文本预演与逐镜提示词门禁；尚未调用视频模型。",
+    )
+    system_prompt = (
+        "你是拥有最终否决权的 AI 短剧总导演与预演监督。你的任务是在任何昂贵的视频模型"
+        "调用前，用文本完成整片预演、逐镜审片和提示词精修。不要输出隐藏思维链，只输出"
+        "可审计的专业结论。必须检查：故事因果、人物动机、情绪升级、镜头节奏、空间与动作"
+        "连续性、角色外貌与服装、单镜可执行性、对白时长、声音策略、镜头语言，以及每一条"
+        "描述是否服务当前镜头。删除形容词堆砌、无关背景、相互矛盾的动作、跨镜混杂、模型"
+        "不支持的参数和无针对性的负向词。每镜只保留一个清晰微节拍，使用可观察的主体、"
+        "起始状态、动作方向、物理结果、机位、运镜、光线与结束构图；相邻镜头必须共享稳定"
+        "的视觉语法并产生明确的叙事推进。不得改变用户已确认的核心故事、角色事实和对白含义。"
+        "只有没有阻断问题且 score 至少 90 时 approved 才能为 true。"
+        "输出必须包含【总导演预演JSON】，后接严格 JSON 对象：approved、score、verdict、"
+        "removed_irrelevant、risks、revised_visual。revised_visual 必须是完整视觉 JSON，"
+        "包含 continuity 和原数量 shots，不得只给修改片段。"
+    )
+    for attempt in range(1, DIRECTOR_PREFLIGHT_MAX_ATTEMPTS + 1):
+        phase = "全面审查并重写" if attempt == 1 else "复核上一版修订并做最终收敛"
+        user_prompt = (
+            f"项目：{project.title}\n用户已确认故事：{project.premise}\n目标时长："
+            f"{project.target_seconds} 秒\n画幅：{project.aspect_ratio}\n清晰度："
+            f"{project.resolution}\n风格：{project.visual_style}\n镜头时长：{durations}\n"
+            f"本轮任务：第 {attempt} 轮，{phase}。\n\n【故事基线】\n"
+            f"{json.dumps(story_data, ensure_ascii=False, separators=(',', ':'))[:14_000]}\n\n"
+            "【待审视觉方案】\n"
+            f"{json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))[:30_000]}"
+        )
+        if feedback:
+            user_prompt += f"\n\n【上一轮未通过原因】\n{feedback[:4000]}"
+        result = await agent_text_completion(
+            runtime,
+            settings,
+            story_run.model_name,
+            system_prompt,
+            user_prompt,
+        )
+        try:
+            parsed = _extract_tagged_json(str(result["content"]), "【总导演预演JSON】")
+            report = _validate_director_preflight(parsed, project, durations)
+        except ValueError as exc:
+            feedback = f"结构化预演无效：{exc}"
+            last_report = None
+            attempts.append(
+                {"attempt": attempt, "approved": False, "score": 0, "verdict": feedback}
+            )
+            continue
+        candidate = dict(report["revised_visual"])
+        last_report = report
+        attempts.append(
+            {
+                "attempt": attempt,
+                "approved": bool(report["approved"]),
+                "score": int(report["score"]),
+                "verdict": str(report["verdict"]),
+                "removed_irrelevant": list(report["removed_irrelevant"]),
+                "risks": list(report["risks"]),
+            }
+        )
+        feedback = "；".join(
+            [str(report["verdict"]), *[str(item) for item in report["risks"]]]
+        )
+        # Always perform two text passes: one edit pass and one independent sign-off pass.
+        if attempt >= 2 and report["approved"]:
+            break
+
+    passed = bool(last_report and last_report["approved"] and len(attempts) >= 2)
+    preflight = {
+        "passed": passed,
+        "score": int(last_report["score"]) if last_report else 0,
+        "verdict": str(last_report["verdict"]) if last_report else feedback,
+        "removed_irrelevant": list(last_report["removed_irrelevant"]) if last_report else [],
+        "risks": list(last_report["risks"]) if last_report else [feedback],
+        "attempts": attempts,
+        "text_model_calls": len(attempts),
+        "checked_shots": len(durations),
+        "video_model_calls": 0,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }
+    stored_visual = {**candidate, "director_preflight": preflight}
+    project.continuity_bible = dict(candidate["continuity"])
+    await _update_project(
+        runtime,
+        project.id,
+        continuity_bible=project.continuity_bible,
+        final_summary=(
+            f"总导演已完成 {len(attempts)} 轮文本预演，评分 {preflight['score']} 分，"
+            + ("允许进入媒体制作。" if passed else "否决视频生成，等待重新规划。")
+        ),
+    )
+    await _update_run(
+        runtime,
+        visual_run.id,
+        status="completed" if passed else "failed",
+        decision_summary=(
+            f"总导演文本预演评分 {preflight['score']} 分；"
+            f"{preflight['verdict']}"
+        )[:1200],
+        deliverable=json.dumps(stored_visual, ensure_ascii=False),
+        result_data=stored_visual,
+        error_message=None if passed else "总导演预演未达到 90 分门槛",
+    )
+    visual_run.result_data = stored_visual
+    visual_run.decision_summary = (
+        f"总导演文本预演评分 {preflight['score']} 分；{preflight['verdict']}"
+    )[:1200]
+    if not passed:
+        raise ValueError(
+            f"总导演预演未通过（{preflight['score']} 分）：{preflight['verdict']}"
+        )
+    return preflight
+
+
 async def _build_quality_report(
     project: DirectorProject,
     shots: list[DirectorShot],
@@ -1598,6 +1805,13 @@ async def run_director_project(
         quality_run = next(run for run in runs if run.agent_key == "quality")
         await _execute_agent_run(runtime, settings, project, story_run, 8)
         await _execute_agent_run(runtime, settings, project, visual_run, 25)
+        await _run_director_preflight(
+            runtime,
+            settings,
+            project,
+            story_run,
+            visual_run,
+        )
 
         await _update_project(runtime, project_id, current_stage="media", progress=40)
         await _update_run(runtime, media_run.id, status="processing", error_message=None)

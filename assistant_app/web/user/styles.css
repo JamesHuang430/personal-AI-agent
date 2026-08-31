@@ -168,6 +168,11 @@ button { cursor: pointer; }
 .continuity-input small { color: #8891a3; font-size: 10px; font-weight: 500; line-height: 1.6; }
 .director-start-modal textarea:focus, .director-start-modal select:focus { border-color: #8d7af0; box-shadow: 0 0 0 3px rgba(102,85,232,.1); background: white; }
 .director-form-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; margin-top: 15px; }
+.director-confirm-option { display: flex !important; grid-template-columns: none !important; align-items: flex-start; gap: 11px !important; margin-top: 17px; padding: 13px 14px; border: 1px solid #dcd5f6; border-radius: 12px; background: #f8f6ff; cursor: pointer; }
+.director-confirm-option input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: #6655e8; }
+.director-confirm-option span { display: grid; gap: 3px; }
+.director-confirm-option strong { color: #433a79; font-size: 12px; }
+.director-confirm-option small { color: #756e91; font-size: 10px; font-weight: 500; line-height: 1.65; }
 .director-start-boundary { display: grid; gap: 3px; margin-top: 17px; padding: 12px 13px; border: 1px solid #e5ddbc; border-radius: 11px; color: #7c704b; background: #fffbef; }
 .director-start-boundary strong { font-size: 11px; }
 .director-start-boundary span { font-size: 10px; line-height: 1.65; }

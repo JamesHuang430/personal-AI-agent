@@ -1,6 +1,9 @@
 import pytest
 
-from assistant_app.api.routes.chat import director_full_production_requested
+from assistant_app.api.routes.chat import (
+    director_full_production_requested,
+    video_generation_confirmed,
+)
 
 
 @pytest.mark.parametrize(
@@ -31,3 +34,27 @@ def test_preview_request_does_not_run_full_production(message: str) -> None:
 
 def test_explicit_tool_argument_still_enables_full_production() -> None:
     assert director_full_production_requested("先做规划", {"one_click": True}) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "提示词已确认，立即生成",
+        "我确认现在生成这个视频",
+        "分镜确认通过，请立即提交视频生成",
+    ],
+)
+def test_expensive_direct_video_requires_explicit_confirmation(message: str) -> None:
+    assert video_generation_confirmed(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "帮我生成一个视频",
+        "先看看提示词",
+        "做一个四秒镜头",
+    ],
+)
+def test_initial_video_idea_is_not_treated_as_confirmation(message: str) -> None:
+    assert video_generation_confirmed(message) is False

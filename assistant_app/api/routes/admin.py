@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
 from assistant_app.api.dependencies import ADMIN_SESSION_COOKIE, current_admin
 from assistant_app.core.encryption import decrypt_secret, encrypt_secret
@@ -20,6 +20,7 @@ from assistant_app.db.models import (
     MusicChannel,
     Package,
     PointLedger,
+    RequestLog,
     SpeechChannel,
     User,
     VideoChannel,
@@ -325,6 +326,32 @@ def _email_channel_payload(item: EmailChannel | None) -> dict[str, object]:
     }
 
 
+def _request_log_payload(item: RequestLog, *, detail: bool = False) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": str(item.id),
+        "request_id": item.request_id,
+        "category": item.category,
+        "source": item.source,
+        "actor": item.actor,
+        "method": item.method,
+        "path": item.path,
+        "status_code": item.status_code,
+        "duration_ms": item.duration_ms,
+        "model_name": item.model_name,
+        "has_error": bool(item.error_message),
+        "created_at": item.created_at.isoformat(),
+    }
+    if detail:
+        payload.update(
+            {
+                "input_payload": item.input_payload,
+                "output_payload": item.output_payload,
+                "error_message": item.error_message,
+            }
+        )
+    return payload
+
+
 def _smtp_connection(item: EmailChannel, secret_key: str) -> SmtpConnection:
     return SmtpConnection(
         host=item.smtp_host,
@@ -425,6 +452,66 @@ async def stats(request: Request, _admin: Annotated[str, Depends(current_admin)]
         "registrations_today": today,
         "active_packages": package_count,
     }
+
+
+@router.get("/request-logs")
+async def request_logs(
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+    category: Literal["all", "http", "model"] = "all",
+    status_code: int | None = Query(default=None, ge=100, le=599),
+    query: str = Query(default="", max_length=200),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    filters = []
+    if category != "all":
+        filters.append(RequestLog.category == category)
+    if status_code is not None:
+        filters.append(RequestLog.status_code == status_code)
+    if query.strip():
+        pattern = f"%{query.strip()}%"
+        filters.append(
+            or_(
+                RequestLog.request_id.ilike(pattern),
+                RequestLog.source.ilike(pattern),
+                RequestLog.path.ilike(pattern),
+                RequestLog.actor.ilike(pattern),
+                RequestLog.model_name.ilike(pattern),
+            )
+        )
+    async with runtime.sessions() as session:
+        total = await session.scalar(select(func.count(RequestLog.id)).where(*filters)) or 0
+        rows = (
+            await session.scalars(
+                select(RequestLog)
+                .where(*filters)
+                .order_by(RequestLog.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+    return {
+        "items": [_request_log_payload(item) for item in rows],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@router.get("/request-logs/{log_id}")
+async def request_log_detail(
+    log_id: UUID,
+    request: Request,
+    _admin: Annotated[str, Depends(current_admin)],
+) -> dict[str, object]:
+    runtime: RuntimeDependencies = request.app.state.runtime
+    async with runtime.sessions() as session:
+        item = await session.get(RequestLog, log_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="请求日志不存在")
+    return _request_log_payload(item, detail=True)
 
 
 @router.get("/users")

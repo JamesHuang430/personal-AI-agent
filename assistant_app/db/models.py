@@ -46,6 +46,27 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class RequestLog(Base):
+    __tablename__ = "request_logs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(320), index=True)
+    method: Mapped[str | None] = mapped_column(String(16))
+    path: Mapped[str | None] = mapped_column(String(500), index=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, index=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    model_name: Mapped[str | None] = mapped_column(String(200), index=True)
+    input_payload: Mapped[str | None] = mapped_column(Text)
+    output_payload: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
 class DailyCheckin(Base):
     __tablename__ = "daily_checkins"
     __table_args__ = (UniqueConstraint("user_id", "checkin_date", name="uq_checkin_user_date"),)

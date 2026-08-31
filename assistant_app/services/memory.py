@@ -31,6 +31,7 @@ from assistant_app.services.age_graph import (
     load_memory_graph,
     upsert_memory_graph,
 )
+from assistant_app.services.model_gateway import logged_model_completion
 
 logger = logging.getLogger(__name__)
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -111,6 +112,7 @@ def _safe_memory(memory: ExtractedMemory) -> bool:
 
 
 async def _extract_exchange(
+    runtime: RuntimeDependencies,
     client: AsyncOpenAI,
     model_name: str,
     user_text: str,
@@ -123,7 +125,10 @@ async def _extract_exchange(
 实体 key 只需在本次输出内唯一；关系必须引用已输出的实体 key。
 JSON 格式：
 {"memories":[{"memory_type":"preference|fact|goal|event|constraint","content":"...","confidence":0.0,"importance":0.0}],"entities":[{"key":"e1","entity_type":"Person|Organization|Place|Topic|Project|Preference|Event|Other","name":"...","aliases":[]}],"relations":[{"source_key":"e1","predicate":"LIKES|WORKS_ON|LOCATED_IN|PLANS|RELATED_TO","target_key":"e2","confidence":0.0}]}"""
-    response = await client.chat.completions.create(
+    response = await logged_model_completion(
+        runtime,
+        client,
+        source="memory-extractor",
         model=model_name,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -219,7 +224,9 @@ async def learn_from_exchange(
     try:
         _channel, client = await _active_channel_and_client(runtime, settings)
         async with client:
-            extracted = await _extract_exchange(client, model_name, user_text, assistant_text)
+            extracted = await _extract_exchange(
+                runtime, client, model_name, user_text, assistant_text
+            )
             embeddings: list[list[float]] = []
             if settings.memory_embedding_model and extracted.memories:
                 try:

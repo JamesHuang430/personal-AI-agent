@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
+from uuid import uuid4
 
 from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from assistant_app.core.config import Settings
 from assistant_app.core.encryption import decrypt_secret
+from assistant_app.core.request_context import current_request_actor, current_request_id
 from assistant_app.db.models import ModelChannel
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.request_logging import record_request_log
 from assistant_app.services.web_search import WebSearchError, fetch_webpage, search_web
 
 
@@ -249,6 +252,57 @@ AGENT_TOOLS = [
 WEB_TOOL_NAMES = {"web_search", "fetch_webpage"}
 
 
+def _model_response_payload(completion: Any) -> Any:
+    if hasattr(completion, "model_dump"):
+        return completion.model_dump(mode="json")
+    return completion
+
+
+async def logged_model_completion(
+    runtime: RuntimeDependencies,
+    client: AsyncOpenAI,
+    *,
+    source: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    **options: Any,
+) -> Any:
+    """Call an OpenAI-compatible text model and retain its exact input/output trace."""
+
+    started = time.perf_counter()
+    request_id = current_request_id() or str(uuid4())
+    model_input = {"model": model, "messages": messages, **options}
+    try:
+        completion = await client.chat.completions.create(**model_input)
+    except Exception as exc:
+        await record_request_log(
+            runtime,
+            request_id=request_id,
+            category="model",
+            source=source,
+            actor=current_request_actor(),
+            status_code=500,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            model_name=model,
+            input_payload=model_input,
+            error_message=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    await record_request_log(
+        runtime,
+        request_id=request_id,
+        category="model",
+        source=source,
+        actor=current_request_actor(),
+        status_code=200,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        model_name=model,
+        input_payload=model_input,
+        output_payload=_model_response_payload(completion),
+    )
+    return completion
+
+
 def _tool_arguments(raw: str) -> dict[str, Any]:
     try:
         value = json.loads(raw)
@@ -354,7 +408,10 @@ async def chat_completion(
 
     async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=60) as client:
         for round_index in range(4):
-            completion = await client.chat.completions.create(
+            completion = await logged_model_completion(
+                runtime,
+                client,
+                source="chat",
                 model=model_name,
                 messages=messages,
                 tools=available_tools,
@@ -500,7 +557,10 @@ async def agent_text_completion(
     await _enforce_qps(runtime, channel)
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
     async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=120) as client:
-        completion = await client.chat.completions.create(
+        completion = await logged_model_completion(
+            runtime,
+            client,
+            source="director-agent",
             model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},

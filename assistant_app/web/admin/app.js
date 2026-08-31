@@ -6,6 +6,8 @@ let videoChannelsCache = [];
 let speechChannelsCache = [];
 let musicChannelsCache = [];
 let adminCaptchaId = '';
+let requestLogOffset = 0;
+const requestLogLimit = 50;
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/v1/admin${path}`, {
@@ -53,11 +55,12 @@ $('#login-form').addEventListener('submit', async (event) => {
 });
 $('#logout').addEventListener('click',async()=>{await api('/auth/logout',{method:'POST'}).catch(()=>null);location.reload();});
 
-const pageNames={overview:'概览',users:'用户管理',packages:'积分套餐',channels:'文本模型渠道','video-channels':'视频生成渠道','speech-channels':'语音配音渠道','music-channels':'音乐模型渠道','email-channel':'邮件服务'};
+const pageNames={overview:'概览',users:'用户管理',packages:'积分套餐',channels:'文本模型渠道','video-channels':'视频生成渠道','speech-channels':'语音配音渠道','music-channels':'音乐模型渠道','request-logs':'请求日志','email-channel':'邮件服务'};
 $$('.nav-item').forEach((button)=>button.addEventListener('click',async()=>{
   $$('.nav-item').forEach(item=>item.classList.remove('active')); button.classList.add('active');
   $$('.page').forEach(page=>page.classList.add('hidden')); $(`#page-${button.dataset.page}`).classList.remove('hidden'); $('#page-name').textContent=pageNames[button.dataset.page];
   if(button.dataset.page==='overview')await loadOverview(); if(button.dataset.page==='users')await loadUsers(); if(button.dataset.page==='packages')await loadPackages(); if(button.dataset.page==='channels')await loadChannels(); if(button.dataset.page==='video-channels')await loadVideoChannels(); if(button.dataset.page==='speech-channels')await loadSpeechChannels(); if(button.dataset.page==='music-channels')await loadMusicChannels();
+  if(button.dataset.page==='request-logs')await loadRequestLogs();
   if(button.dataset.page==='email-channel')await loadEmailChannel();
 }));
 
@@ -108,6 +111,47 @@ async function loadMusicChannels(){try{musicChannelsCache=await api('/music-chan
 $('#music-channel-form').addEventListener('submit',async(event)=>{event.preventDefault();const id=$('#music-channel-id').value;const desiredActive=$('#music-channel-active').checked;const previous=musicChannelsCache.find(item=>item.id===id);const payload={name:$('#music-channel-name').value,base_url:$('#music-channel-url').value,model_name:$('#music-channel-model').value,qps_limit:Number($('#music-channel-qps').value),default_format:$('#music-channel-format').value};if(!id||$('#music-channel-key').value)payload.api_key=$('#music-channel-key').value;if(!id)payload.is_active=desiredActive;try{await api(id?`/music-channels/${id}`:'/music-channels',{method:id?'PATCH':'POST',body:JSON.stringify(payload)});if(id&&previous&&previous.is_active!==desiredActive)await api(`/music-channels/${id}/${desiredActive?'activate':'disable'}`,{method:'POST'});notify(id?`音乐渠道已更新${desiredActive?'并启用':'并停用'}`:`音乐渠道已新增${desiredActive?'并启用':''}`);resetMusicChannelForm();await loadMusicChannels();}catch(error){notify(error.message);}});
 $('#music-channel-grid').addEventListener('click',async(event)=>{const edit=event.target.closest('[data-music-edit]');const activate=event.target.closest('[data-music-activate]');const disable=event.target.closest('[data-music-disable]');try{if(edit){const item=musicChannelsCache.find(row=>row.id===edit.dataset.musicEdit);$('#music-channel-id').value=item.id;$('#music-channel-name').value=item.name;$('#music-channel-url').value=item.base_url;$('#music-channel-model').value=item.model_name;$('#music-channel-qps').value=item.qps_limit;$('#music-channel-format').value=item.default_format;$('#music-channel-key').value='';$('#music-channel-key').required=false;$('#music-channel-key').placeholder='留空则保持原 Key';$('#music-channel-active').checked=item.is_active;$('#music-channel-active').disabled=false;$('#music-channel-save').textContent='保存修改';$('#music-channel-cancel').classList.remove('hidden');scrollTo({top:0,behavior:'smooth'});return;}if(activate){await api(`/music-channels/${activate.dataset.musicActivate}/activate`,{method:'POST'});notify('音乐渠道已启用');}if(disable){await api(`/music-channels/${disable.dataset.musicDisable}/disable`,{method:'POST'});notify('音乐渠道已停用');}await loadMusicChannels();}catch(error){notify(error.message);}});
 $('#music-channel-cancel').addEventListener('click',resetMusicChannelForm);
+
+function prettyPayload(value){
+  if(!value)return '—';
+  try{return JSON.stringify(JSON.parse(value),null,2);}catch{return value;}
+}
+async function loadRequestLogs(reset=false){
+  if(reset)requestLogOffset=0;
+  const params=new URLSearchParams({category:$('#request-log-category').value,query:$('#request-log-query').value,offset:String(requestLogOffset),limit:String(requestLogLimit)});
+  if($('#request-log-status').value)params.set('status_code',$('#request-log-status').value);
+  try{
+    const data=await api(`/request-logs?${params}`);
+    $('#request-log-empty').classList.toggle('hidden',data.items.length>0);
+    $('#request-log-total').textContent=`共 ${data.total.toLocaleString('zh-CN')} 条 · 第 ${Math.floor(data.offset/data.limit)+1} 页`;
+    $('#request-log-prev').disabled=data.offset===0;
+    $('#request-log-next').disabled=data.offset+data.items.length>=data.total;
+    $('#request-log-table').innerHTML=data.items.map(item=>{
+      const target=item.category==='model'?(item.model_name||item.source):(`${item.method||''} ${item.path||''}`.trim());
+      const statusClass=item.status_code>=500?'log-error':item.status_code>=400?'log-warn':'log-ok';
+      return `<tr><td>${formatDate(item.created_at)}</td><td><span class="badge ${item.category==='model'?'model-log':'http-log'}">${item.category==='model'?'MODEL':'HTTP'}</span><small>${escapeHtml(item.source)}</small></td><td><strong class="log-target">${escapeHtml(target)}</strong><small>${escapeHtml(item.request_id)}</small></td><td>${escapeHtml(item.actor||'—')}</td><td><span class="log-status ${statusClass}">${item.status_code||'—'}</span></td><td>${item.duration_ms==null?'—':`${Number(item.duration_ms).toFixed(1)} ms`}</td><td><button class="small-btn" data-request-log="${item.id}" type="button">详情</button></td></tr>`;
+    }).join('');
+  }catch(error){notify(error.message);}
+}
+async function showRequestLog(id){
+  try{
+    const item=await api(`/request-logs/${id}`);
+    $('#request-log-detail-title').textContent=item.category==='model'?`${item.model_name||'文本模型'} · ${item.source}`:`${item.method||''} ${item.path||''}`.trim();
+    $('#request-log-meta').innerHTML=[['时间',formatDate(item.created_at)],['Request ID',item.request_id],['用户',item.actor||'—'],['状态',item.status_code??'—'],['耗时',item.duration_ms==null?'—':`${Number(item.duration_ms).toFixed(2)} ms`]].map(([key,value])=>`<div><small>${key}</small><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+    $('#request-log-input').textContent=prettyPayload(item.input_payload);
+    $('#request-log-output').textContent=prettyPayload(item.output_payload);
+    $('#request-log-error').textContent=item.error_message||'';
+    $('#request-log-error-wrap').classList.toggle('hidden',!item.error_message);
+    $('#request-log-dialog').showModal();
+  }catch(error){notify(error.message);}
+}
+$('#request-log-search').addEventListener('click',()=>loadRequestLogs(true));
+$('#request-log-refresh').addEventListener('click',()=>loadRequestLogs(true));
+$('#request-log-query').addEventListener('keydown',event=>{if(event.key==='Enter')loadRequestLogs(true);});
+$('#request-log-prev').addEventListener('click',()=>{requestLogOffset=Math.max(0,requestLogOffset-requestLogLimit);loadRequestLogs();});
+$('#request-log-next').addEventListener('click',()=>{requestLogOffset+=requestLogLimit;loadRequestLogs();});
+$('#request-log-table').addEventListener('click',event=>{const button=event.target.closest('[data-request-log]');if(button)showRequestLog(button.dataset.requestLog);});
+$('#request-log-close').addEventListener('click',()=>$('#request-log-dialog').close());
 
 async function loadEmailChannel(){
   try{

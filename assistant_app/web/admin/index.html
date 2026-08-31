@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>知伴 · 运营控制台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.7">
+  <link rel="stylesheet" href="/static/styles.css?v=0.8">
 </head>
 <body>
   <section id="login-view" class="login-shell">
@@ -34,6 +34,7 @@
         <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
         <button class="nav-item" data-page="speech-channels" type="button"><span>◉</span>语音渠道</button>
         <button class="nav-item" data-page="music-channels" type="button"><span>♫</span>音乐渠道</button>
+        <button class="nav-item" data-page="request-logs" type="button"><span>≡</span>请求日志</button>
         <button class="nav-item" data-page="email-channel" type="button"><span>✉</span>邮件服务</button>
       </nav>
       <div class="sidebar-foot"><span class="online-dot"></span>运营服务在线</div>
@@ -146,6 +147,18 @@
           <div id="music-channel-grid" class="channel-grid"></div>
         </section>
 
+        <section id="page-request-logs" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">REQUEST AUDIT</p><h1>请求日志</h1><p class="muted">记录每次站内请求和文本大模型调用；输入、输出完整保留，仅 API Key 脱敏</p></div><button id="request-log-refresh" class="ghost" type="button">刷新</button></div>
+          <div class="toolbar request-log-toolbar">
+            <select id="request-log-category"><option value="all">全部类型</option><option value="model">大模型调用</option><option value="http">HTTP 请求</option></select>
+            <select id="request-log-status"><option value="">全部状态</option><option value="200">200 成功</option><option value="400">400</option><option value="401">401</option><option value="403">403</option><option value="404">404</option><option value="422">422</option><option value="500">500 错误</option></select>
+            <input id="request-log-query" placeholder="搜索路径、模型、用户或 Request ID">
+            <button id="request-log-search" class="primary" type="button">查询</button>
+          </div>
+          <div class="panel table-panel"><table class="request-log-table"><thead><tr><th>时间</th><th>类型 / 来源</th><th>请求</th><th>用户</th><th>状态</th><th>耗时</th><th></th></tr></thead><tbody id="request-log-table"></tbody></table><p id="request-log-empty" class="empty hidden">暂无匹配日志</p></div>
+          <div class="log-pagination"><span id="request-log-total" class="muted"></span><div><button id="request-log-prev" class="ghost" type="button">上一页</button><button id="request-log-next" class="ghost" type="button">下一页</button></div></div>
+        </section>
+
         <section id="page-email-channel" class="page hidden">
           <div class="page-heading"><div><p class="eyebrow purple">EMAIL DELIVERY</p><h1>邮件服务</h1><p class="muted">配置注册验证码、测试邮件和密码重置邮件的 SMTP 渠道</p></div></div>
           <div class="security-banner"><span>✉</span><div><strong>授权码安全</strong><p>SMTP 授权码加密入库，保存后不再回显；编辑时留空表示保持原授权码。</p></div></div>
@@ -169,7 +182,14 @@
       </div>
     </main>
   </div>
+  <dialog id="request-log-dialog" class="log-dialog">
+    <div class="log-dialog-head"><div><p class="eyebrow purple">REQUEST DETAIL</p><h2 id="request-log-detail-title">请求详情</h2></div><button id="request-log-close" type="button" aria-label="关闭">×</button></div>
+    <div id="request-log-meta" class="log-meta"></div>
+    <section><h3>输入</h3><pre id="request-log-input"></pre></section>
+    <section><h3>输出</h3><pre id="request-log-output"></pre></section>
+    <section id="request-log-error-wrap" class="hidden"><h3>错误</h3><pre id="request-log-error" class="error-output"></pre></section>
+  </dialog>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.6" defer></script>
+  <script src="/static/app.js?v=0.7" defer></script>
 </body>
 </html>

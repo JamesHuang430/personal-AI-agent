@@ -17,6 +17,7 @@ from assistant_app.db.models import (
     DirectorProject,
     DirectorShot,
     SpeechJob,
+    VideoChannel,
     VideoJob,
 )
 from assistant_app.db.runtime import RuntimeDependencies
@@ -51,12 +52,33 @@ class DirectorProjectNotRemasterableError(RuntimeError):
 AGENT_BRIEFS = {
     "story": "把创意收敛为受众、主题、人物、节拍、可表演对白和完整剧本",
     "visual": "建立连续性资产并输出可直接驱动视频、配音和字幕的逐镜方案",
-    "media": "调用视频和语音渠道，完成混音、字幕烧录与合片",
+    "media": "优先保留 H3 原生声画，缺失音轨时调用语音兜底，并完成字幕烧录与合片",
     "quality": "检查真实媒体文件的画面、音轨、字幕、时长和可交付性",
 }
 
 DIRECTOR_RESOLUTIONS = {"768P", "2K"}
 DIRECTOR_SUBTITLE_FONT_SIZE = 9
+
+VOICE_ROLE_DIRECTIONS = {
+    "narrator": "稳定、清晰、有叙事感的画外旁白",
+    "adult_male": "成年男性声线",
+    "adult_female": "成年女性声线",
+    "elder_male": "老年男性声线",
+    "elder_female": "老年女性声线",
+    "boy": "男孩声线",
+    "girl": "女孩声线",
+}
+
+EMOTION_DIRECTIONS = {
+    "calm": "平静自然",
+    "happy": "高兴明亮",
+    "surprised": "惊讶、短促吸气后说话",
+    "disappointed": "失望低落",
+    "sad": "伤心克制",
+    "devastated": "崩溃哽咽",
+    "angry": "愤怒有力",
+    "fearful": "害怕发紧",
+}
 
 SHOT_BEATS = (
     "建立独特环境、时间与空间方向",
@@ -336,6 +358,11 @@ def _fallback_shot_spec(sequence: int, total: int, premise: str) -> dict[str, ob
         "voice_role": "narrator",
         "emotion": "calm",
         "speech_speed": 1.0,
+        "performance_direction": "自然、克制，动作与说话节奏一致",
+        "sound_effects": "与动作同步的轻微环境声",
+        "background_music": "低音量电影感配乐，对白出现时自动降低",
+        "dialogue_start_seconds": 0.4,
+        "dialogue_end_seconds": None,
     }
 
 
@@ -348,6 +375,9 @@ def _shot_spec_instruction(raw: dict[str, object]) -> str:
         ("景别", "shot_size"),
         ("机位与运镜", "camera"),
         ("光线与色彩", "lighting"),
+        ("表演指导", "performance_direction"),
+        ("环境与动作音效", "sound_effects"),
+        ("背景音乐", "background_music"),
         ("转场衔接", "transition"),
         ("正向提示词", "positive_prompt"),
         ("负向提示词", "negative_prompt"),
@@ -399,7 +429,35 @@ def _normalize_shot_spec(
         "voice_role": voice_role if voice_role in SPEECH_VOICE_ROLES else None,
         "emotion": emotion if emotion in SPEECH_EMOTIONS else "calm",
         "speech_speed": speech_speed,
+        "performance_direction": str(
+            raw.get("performance_direction") or fallback["performance_direction"]
+        ).strip()[:500],
+        "sound_effects": str(raw.get("sound_effects") or fallback["sound_effects"]).strip()[:500],
+        "background_music": str(
+            raw.get("background_music") or fallback["background_music"]
+        ).strip()[:500],
+        "dialogue_start_seconds": raw.get("dialogue_start_seconds"),
+        "dialogue_end_seconds": raw.get("dialogue_end_seconds"),
     }
+
+
+def _dialogue_window(spec: dict[str, object], duration: float) -> tuple[float, float]:
+    default_start = 0.4 if duration >= 5 else 0.2
+    text_length = len(re.sub(r"\s+", "", str(spec.get("speech_text") or "")))
+    estimated_duration = max(0.8, text_length / 4.0)
+    try:
+        requested_start = spec.get("dialogue_start_seconds")
+        start = float(requested_start) if requested_start is not None else default_start
+    except (TypeError, ValueError):
+        start = default_start
+    try:
+        requested_end = spec.get("dialogue_end_seconds")
+        end = float(requested_end) if requested_end is not None else start + estimated_duration
+    except (TypeError, ValueError):
+        end = start + estimated_duration
+    start = max(0.0, min(start, max(0.0, duration - 0.5)))
+    end = max(start + 0.5, min(end, duration - 0.05))
+    return round(start, 3), round(end, 3)
 
 
 def _markdown_shot_specs(content: str) -> dict[int, dict[str, object]]:
@@ -532,8 +590,11 @@ def _validate_visual_data(
         if not spoken:
             raise ValueError(f"第 {index} 镜没有可配音文本")
         spec["speech_text"] = spoken
-        # 字幕必须与实际送入 TTS 的文本一致，避免声画内容不一致。
+        # 同一份文本同时约束原生对白（或 TTS 兜底）和字幕，避免内容分叉。
         spec["subtitle_text"] = spoken
+        dialogue_start, dialogue_end = _dialogue_window(spec, float(seconds))
+        spec["dialogue_start_seconds"] = dialogue_start
+        spec["dialogue_end_seconds"] = dialogue_end
         normalized.append(spec)
 
     continuity.setdefault("version", 1)
@@ -557,24 +618,49 @@ def _shot_prompt(
     spec: dict[str, object],
 ) -> str:
     continuity = _continuity_prompt(project)
+    continuity_data = project.continuity_bible or _default_continuity_bible(project)
     speaker = str(spec.get("speaker") or "旁白").strip()
     speech_text = str(spec.get("speech_text") or "").strip()
+    voice_role = _voice_role_for_spec(spec, continuity_data)
+    character = _character_for_spec(spec, continuity_data)
+    voice_profile = str((character or {}).get("voice_profile") or "").strip()
+    emotion = str(spec.get("emotion") or "calm")
+    dialogue_start, dialogue_end = _dialogue_window(spec, float(seconds))
+    voice_direction = VOICE_ROLE_DIRECTIONS.get(voice_role, "自然中文声线")
+    if voice_profile:
+        voice_direction = f"{voice_direction}，固定音色特征：{voice_profile}"
+    performance_direction = str(spec.get("performance_direction") or "自然表演").strip()
+    sound_effects = str(spec.get("sound_effects") or "与动作同步的环境声").strip()
+    background_music = str(spec.get("background_music") or "低音量电影感配乐").strip()
     performance = (
-        f"画面中的{speaker}正在说台词“{speech_text}”，必须有自然、连续、与说话节奏一致的"
-        "口部动作和表情变化；视频模型不要生成字幕或画面文字。"
+        f"{dialogue_start:.2f}s 至 {dialogue_end:.2f}s，画面中的{speaker}用中文准确说出且只说"
+        f"台词“{speech_text}”。声线为{voice_direction}，情绪为"
+        f"{EMOTION_DIRECTIONS.get(emotion, '平静自然')}，表演要求：{performance_direction}。"
+        "口型、停顿、呼吸、眼神和动作必须与实际说话同步。"
         if speaker not in {"旁白", "画外音", "解说"}
-        else f"本镜使用画外旁白“{speech_text}”，画面人物不要做无意义的说话口型。"
+        else (
+            f"{dialogue_start:.2f}s 至 {dialogue_end:.2f}s出现中文画外旁白，准确说出且只说"
+            f"“{speech_text}”。声线为{voice_direction}，情绪为"
+            f"{EMOTION_DIRECTIONS.get(emotion, '平静自然')}；画面人物不要做说话口型。"
+        )
     )
     return (
         f"{project.visual_style}，{project.aspect_ratio} AI 短剧，第 {sequence}/{total} 镜，"
         f"时长 {seconds} 秒。\n"
         f"【本镜唯一分镜方案】\n{spec['instruction']}\n"
-        f"【对白表演要求】{performance}\n"
+        f"【原生对白与表演】{performance}\n"
+        f"【环境与动作音效】{sound_effects}，音效必须与画面事件同步。\n"
+        f"【背景音乐】{background_music}。使用原生立体声混音；对白出现时音乐自动降低，"
+        "对白始终清晰居中，音乐不得盖住人声。\n"
+        "【声音硬约束】只允许上述一句可辨识人声，不得增加旁人说话、重复台词、歌唱或"
+        "第二个说话者。生成完整原生声音轨。\n"
+        "【字幕策略】不要在生成画面中绘制字幕、标题或文字；系统将按上述对白时间窗"
+        "烧录与台词完全一致的可校正字幕。\n"
         "只表现本镜的叙事任务、地点、动作和机位；不得复用其他镜头的构图或动作。\n"
         f"【全片故事背景】{project.premise}\n"
         f"【跨镜连续性圣经】{continuity}\n"
         "人物脸型、五官、发型、年龄感、服装配色、标志物、声线及人物关系必须固定；"
-        "不得擅自换装、换脸或新增人物。动作自然，镜头衔接清楚，无字幕、无文字、无水印。"
+        "不得擅自换装、换脸或新增人物。动作自然，镜头衔接清楚，无画内文字、无水印。"
     )[:8_000]
 
 
@@ -594,6 +680,7 @@ def agent_run_payload(run: DirectorAgentRun) -> dict[str, object]:
 
 
 def shot_payload(shot: DirectorShot, job: VideoJob | None = None) -> dict[str, object]:
+    media = dict((shot.continuity_snapshot or {}).get("_media") or {})
     return {
         "id": str(shot.id),
         "sequence": shot.sequence,
@@ -606,6 +693,13 @@ def shot_payload(shot: DirectorShot, job: VideoJob | None = None) -> dict[str, o
         "speech_text": shot.speech_text,
         "subtitle_text": shot.subtitle_text,
         "speech_job_id": str(shot.speech_job_id) if shot.speech_job_id else None,
+        "audio_source": media.get("audio_source"),
+        "native_audio": media.get("audio_source") == "native_h3",
+        "background_music": media.get("background_music"),
+        "subtitle_timing": {
+            "start_seconds": media.get("subtitle_start_seconds"),
+            "end_seconds": media.get("subtitle_end_seconds"),
+        },
         "has_burned_subtitles": bool(shot.rendered_path and shot.subtitle_text),
         "error_message": shot.error_message if shot.status == "failed" else None,
         "video": video_job_payload(job) if job else None,
@@ -934,17 +1028,43 @@ def _dialogue_voice_filter(duration: float) -> str:
     return f"[1:a]aresample=48000,apad,atrim=0:{duration:.3f},volume=1.35[voice]"
 
 
+async def _video_source_path(video_job: VideoJob) -> str:
+    original_video_path = GENERATED_ROOT / f"{video_job.id}.mp4"
+    if await asyncio.to_thread(original_video_path.is_file):
+        return os.fspath(original_video_path)
+    return str(video_job.storage_path or "")
+
+
+async def _subtitle_filter(
+    shot: DirectorShot,
+    duration: float,
+    start_seconds: float | None,
+    end_seconds: float | None,
+) -> str:
+    await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
+    subtitle_path = GENERATED_ROOT / f"director-shot-{shot.id}.srt"
+    subtitle = re.sub(r"[\r\n]+", " ", shot.subtitle_text or shot.speech_text or "").strip()
+    start = max(0.0, min(float(start_seconds or 0.0), max(0.0, duration - 0.5)))
+    end = max(start + 0.5, min(float(end_seconds or duration - 0.05), duration - 0.05))
+    srt = f"1\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{subtitle}\n"
+    await asyncio.to_thread(subtitle_path.write_text, srt, encoding="utf-8")
+    return (
+        f"subtitles=filename='{_subtitle_filter_path(subtitle_path)}':"
+        f"force_style='FontName=Noto Sans CJK SC,FontSize={DIRECTOR_SUBTITLE_FONT_SIZE},"
+        "PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=72'"
+    )
+
+
 async def _render_dialogue_shot(
     shot: DirectorShot,
     video_job: VideoJob,
     speech_job: SpeechJob,
+    *,
+    subtitle_start_seconds: float | None = None,
+    subtitle_end_seconds: float | None = None,
 ) -> str:
-    original_video_path = GENERATED_ROOT / f"{video_job.id}.mp4"
-    video_source = (
-        os.fspath(original_video_path)
-        if await asyncio.to_thread(original_video_path.is_file)
-        else video_job.storage_path
-    )
+    video_source = await _video_source_path(video_job)
     video_available = video_source and await asyncio.to_thread(Path(video_source).is_file)
     if not video_available:
         raise RuntimeError("视频渠道没有留下可合成的文件")
@@ -954,19 +1074,13 @@ async def _render_dialogue_shot(
     if not speech_available:
         raise RuntimeError("语音渠道没有留下可合成的文件")
 
-    await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
-    subtitle_path = GENERATED_ROOT / f"director-shot-{shot.id}.srt"
     rendered_path = GENERATED_ROOT / f"director-shot-{shot.id}.mp4"
     duration = float(shot.seconds)
-    subtitle = re.sub(r"[\r\n]+", " ", shot.subtitle_text or shot.speech_text or "").strip()
-    srt = f"1\n00:00:00,000 --> {_srt_timestamp(max(0.5, duration - 0.05))}\n{subtitle}\n"
-    await asyncio.to_thread(subtitle_path.write_text, srt, encoding="utf-8")
-
-    subtitle_filter = (
-        f"subtitles=filename='{_subtitle_filter_path(subtitle_path)}':"
-        f"force_style='FontName=Noto Sans CJK SC,FontSize={DIRECTOR_SUBTITLE_FONT_SIZE},"
-        "PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=72'"
+    subtitle_filter = await _subtitle_filter(
+        shot,
+        duration,
+        subtitle_start_seconds,
+        subtitle_end_seconds,
     )
     voice_chain = _dialogue_voice_filter(duration)
 
@@ -1006,6 +1120,58 @@ async def _render_dialogue_shot(
     return os.fspath(rendered_path)
 
 
+async def _render_native_audio_shot(
+    shot: DirectorShot,
+    video_job: VideoJob,
+    *,
+    subtitle_start_seconds: float | None = None,
+    subtitle_end_seconds: float | None = None,
+) -> str:
+    video_source = await _video_source_path(video_job)
+    if not video_source or not await asyncio.to_thread(Path(video_source).is_file):
+        raise RuntimeError("视频渠道没有留下可合成的文件")
+    duration = float(shot.seconds)
+    subtitle_filter = await _subtitle_filter(
+        shot,
+        duration,
+        subtitle_start_seconds,
+        subtitle_end_seconds,
+    )
+    rendered_path = GENERATED_ROOT / f"director-shot-{shot.id}.mp4"
+    await _run_media_command(
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_source,
+        "-vf",
+        subtitle_filter,
+        "-af",
+        f"aresample=48000,apad,atrim=0:{duration:.3f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0",
+        "-t",
+        f"{duration:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        os.fspath(rendered_path),
+    )
+    return os.fspath(rendered_path)
+
+
 async def _create_and_run_shot(
     runtime: RuntimeDependencies,
     settings: Settings,
@@ -1017,6 +1183,18 @@ async def _create_and_run_shot(
 ) -> tuple[DirectorShot, VideoJob]:
     continuity = project.continuity_bible or _default_continuity_bible(project)
     prompt = _shot_prompt(project, sequence, total, seconds, spec)
+    dialogue_start, dialogue_end = _dialogue_window(spec, float(seconds))
+    media_snapshot = dict(continuity)
+    media_snapshot["_media"] = {
+        "audio_source": "pending",
+        "native_audio_requested": True,
+        "single_speaker": str(spec.get("speaker") or "旁白"),
+        "emotion": str(spec.get("emotion") or "calm"),
+        "subtitle_start_seconds": dialogue_start,
+        "subtitle_end_seconds": dialogue_end,
+        "sound_effects": str(spec.get("sound_effects") or ""),
+        "background_music": str(spec.get("background_music") or ""),
+    }
     async with runtime.sessions() as session, session.begin():
         shot = await session.scalar(
             select(DirectorShot)
@@ -1036,7 +1214,7 @@ async def _create_and_run_shot(
                 prompt=prompt,
                 seconds=seconds,
                 status="processing",
-                continuity_snapshot=continuity,
+                continuity_snapshot=media_snapshot,
             )
             session.add(shot)
         else:
@@ -1044,7 +1222,7 @@ async def _create_and_run_shot(
             shot.prompt = prompt
             shot.seconds = seconds
             shot.status = "processing"
-            shot.continuity_snapshot = continuity
+            shot.continuity_snapshot = media_snapshot
             shot.video_job_id = None
             shot.speech_job_id = None
             shot.rendered_path = None
@@ -1070,40 +1248,76 @@ async def _create_and_run_shot(
         message = completed_job.error_message if completed_job else "视频任务不存在"
         await _update_shot(runtime, shot.id, status="failed", error_message=message)
         raise RuntimeError(message or "镜头生成失败")
-
-    locked_voice_id = _voice_id_for_spec(spec, continuity)
-    speech_job = await create_speech_job(
-        runtime,
-        project.user_id,
-        shot.speech_text or "",
-        locked_voice_id,
-        float(spec.get("speech_speed") or 1.0),
-        speaker=shot.speaker,
-        voice_role=None if locked_voice_id else _voice_role_for_spec(spec, continuity),
-        emotion=str(spec.get("emotion") or "calm"),
-    )
-    await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
-    await run_speech_job(runtime, settings, speech_job.id)
     async with runtime.sessions() as session:
-        completed_speech = await session.get(SpeechJob, speech_job.id)
-    if completed_speech is None or completed_speech.status != "completed":
-        message = completed_speech.error_message if completed_speech else "语音任务不存在"
-        await _update_shot(runtime, shot.id, status="failed", error_message=message)
-        raise RuntimeError(message or "语音生成失败")
-
-    rendered_path = await _render_dialogue_shot(shot, completed_job, completed_speech)
+        video_channel = await session.get(VideoChannel, completed_job.channel_id)
+    original_info = await _probe_media(str(completed_job.storage_path or ""))
+    original_streams = original_info.get("streams", [])
+    has_native_audio = isinstance(original_streams, list) and any(
+        isinstance(item, dict) and item.get("codec_type") == "audio"
+        for item in original_streams
+    )
+    native_h3 = bool(
+        video_channel
+        and video_channel.provider.casefold() == "minimax"
+        and video_channel.model_name.casefold().startswith("minimax-h3")
+        and has_native_audio
+    )
+    completed_speech: SpeechJob | None = None
+    if native_h3:
+        rendered_path = await _render_native_audio_shot(
+            shot,
+            completed_job,
+            subtitle_start_seconds=dialogue_start,
+            subtitle_end_seconds=dialogue_end,
+        )
+        audio_source = "native_h3"
+    else:
+        locked_voice_id = _voice_id_for_spec(spec, continuity)
+        speech_job = await create_speech_job(
+            runtime,
+            project.user_id,
+            shot.speech_text or "",
+            locked_voice_id,
+            float(spec.get("speech_speed") or 1.0),
+            speaker=shot.speaker,
+            voice_role=None if locked_voice_id else _voice_role_for_spec(spec, continuity),
+            emotion=str(spec.get("emotion") or "calm"),
+        )
+        await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
+        await run_speech_job(runtime, settings, speech_job.id)
+        async with runtime.sessions() as session:
+            completed_speech = await session.get(SpeechJob, speech_job.id)
+        if completed_speech is None or completed_speech.status != "completed":
+            message = completed_speech.error_message if completed_speech else "语音任务不存在"
+            await _update_shot(runtime, shot.id, status="failed", error_message=message)
+            raise RuntimeError(message or "语音生成失败")
+        rendered_path = await _render_dialogue_shot(
+            shot,
+            completed_job,
+            completed_speech,
+            subtitle_start_seconds=dialogue_start,
+            subtitle_end_seconds=dialogue_end,
+        )
+        audio_source = "external_tts_fallback"
+    media_snapshot["_media"] = {
+        **dict(media_snapshot["_media"]),
+        "audio_source": audio_source,
+        "native_audio_detected": has_native_audio,
+    }
     async with runtime.sessions() as session, session.begin():
         stored_job = await session.get(VideoJob, completed_job.id, with_for_update=True)
         if stored_job is not None:
             stored_job.storage_path = rendered_path
             stored_job.updated_at = datetime.now(UTC)
     completed_job.storage_path = rendered_path
-    shot.speech_job_id = speech_job.id
+    shot.speech_job_id = completed_speech.id if completed_speech else None
     shot.rendered_path = rendered_path
     await _update_shot(
         runtime,
         shot.id,
         status="completed",
+        speech_job_id=completed_speech.id if completed_speech else None,
+        continuity_snapshot=media_snapshot,
         rendered_path=rendered_path,
         error_message=None,
     )
@@ -1188,11 +1402,16 @@ async def _execute_agent_run(
             "boy、girl 中选择，禁止编造 voice_id。"
             "shots 每项必须包含 sequence、title、story_beat、characters、location、action、"
             "shot_size、camera、lighting、transition、positive_prompt、negative_prompt、speaker、"
-            "speech_text、subtitle_text、voice_role、emotion、speech_speed。emotion 只能从 calm、"
+            "speech_text、subtitle_text、voice_role、emotion、speech_speed、performance_direction、"
+            "sound_effects、background_music、dialogue_start_seconds、dialogue_end_seconds。"
+            "dialogue_start_seconds 与 dialogue_end_seconds 必须位于当前镜头时长内，并为原生"
+            "对白预留准确表演时间；sound_effects 描述与动作同步的环境/拟音；background_music "
+            "描述低音量配乐及对白时自动降低的要求。emotion 只能从 calm、"
             "happy、surprised、disappointed、sad、devastated、angry、fearful 中选择。同一人物"
             "跨镜保持 voice_role 不变，但 emotion 应根据当前表演变化。每一镜都必须有非空 "
             "speech_text，"
-            "用于真实语音生成，字幕将与 speech_text 保持完全一致。中文对白长度不得超过该镜"
+            "它将直接驱动 H3 原生对白、口型和表演；字幕将与 speech_text 保持完全一致。"
+            "中文对白长度不得超过该镜"
             "秒数乘以 4 个汉字。不得使用“同上”省略字段。"
         )
     user_prompt = (
@@ -1257,6 +1476,8 @@ async def _build_quality_report(
     issues: list[str] = []
     shot_checks: list[dict[str, object]] = []
     for shot in shots:
+        media = dict((shot.continuity_snapshot or {}).get("_media") or {})
+        audio_source = str(media.get("audio_source") or "legacy")
         rendered = Path(shot.rendered_path or "")
         if not shot.rendered_path or not await asyncio.to_thread(rendered.is_file):
             issues.append(f"第 {shot.sequence} 镜缺少合成文件")
@@ -1278,10 +1499,20 @@ async def _build_quality_report(
             issues.append(f"第 {shot.sequence} 镜没有视频轨")
         if not has_audio:
             issues.append(f"第 {shot.sequence} 镜没有语音轨")
-        if not shot.speech_job_id:
-            issues.append(f"第 {shot.sequence} 镜没有独立语音任务")
+        if audio_source == "native_h3" and not media.get("native_audio_detected"):
+            issues.append(f"第 {shot.sequence} 镜标记为 H3 原生音频但未检测到原生音轨")
+        if audio_source != "native_h3" and not shot.speech_job_id:
+            issues.append(f"第 {shot.sequence} 镜既没有 H3 原生音频也没有兜底语音任务")
         if not has_subtitle:
             issues.append(f"第 {shot.sequence} 镜没有字幕文本")
+        subtitle_start = media.get("subtitle_start_seconds")
+        subtitle_end = media.get("subtitle_end_seconds")
+        if audio_source != "legacy" and (
+            not isinstance(subtitle_start, (int, float))
+            or not isinstance(subtitle_end, (int, float))
+            or not 0 <= float(subtitle_start) < float(subtitle_end) <= float(shot.seconds)
+        ):
+            issues.append(f"第 {shot.sequence} 镜字幕时间窗无效")
         if abs(duration - float(shot.seconds)) > 1.0:
             issues.append(f"第 {shot.sequence} 镜时长异常：{duration:.2f}s")
         shot_checks.append(
@@ -1289,6 +1520,10 @@ async def _build_quality_report(
                 "sequence": shot.sequence,
                 "video": has_video,
                 "audio": has_audio,
+                "audio_source": audio_source,
+                "single_speaker": media.get("single_speaker"),
+                "emotion": media.get("emotion"),
+                "background_music_directed": bool(media.get("background_music")),
                 "burned_subtitles": has_subtitle,
                 "duration_seconds": round(duration, 3),
             }
@@ -1420,28 +1655,40 @@ async def run_director_project(
             )
 
         final_path: str | None = None
+        audio_sources = [
+            str(dict((shot.continuity_snapshot or {}).get("_media") or {}).get("audio_source"))
+            for shot in completed_shots
+        ]
+        native_audio_shots = audio_sources.count("native_h3")
+        fallback_tts_shots = audio_sources.count("external_tts_fallback")
+        audio_summary = (
+            f"{native_audio_shots} 镜保留 H3 原生声画"
+            + (f"，{fallback_tts_shots} 镜使用外部配音兜底" if fallback_tts_shots else "")
+        )
         if project.one_click:
             await _update_project(runtime, project_id, current_stage="media", progress=88)
             final_path = await _concat_shots(project, completed_shots)
             project.final_video_path = final_path
             await _update_project(runtime, project_id, final_video_path=final_path, progress=91)
             preview_note = (
-                f"已生成 {len(completed_shots)} 个带配音和烧录字幕的镜头，并合成为约 "
-                f"{project.target_seconds} 秒影片。"
+                f"已生成 {len(completed_shots)} 个带同步声音和定时字幕的镜头（{audio_summary}），"
+                f"并合成为约 {project.target_seconds} 秒影片。"
             )
         else:
-            preview_note = "首个带真实配音和烧录字幕的预览镜头已生成。"
+            preview_note = f"首个带同步声音和定时字幕的预览镜头已生成（{audio_summary}）。"
         await _update_run(
             runtime,
             media_run.id,
             status="completed",
-            decision_summary="视频、语音、混音和字幕烧录均已执行。",
+            decision_summary="已按 H3 原生音频优先、外部语音兜底策略完成声音和字幕制作。",
             deliverable=preview_note,
             result_data={
                 "completed_shots": len(completed_shots),
                 "final_video_path": final_path,
-                "speech": True,
+                "native_audio_shots": native_audio_shots,
+                "fallback_tts_shots": fallback_tts_shots,
                 "burned_subtitles": True,
+                "subtitle_timing": True,
             },
         )
 

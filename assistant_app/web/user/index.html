@@ -365,7 +365,7 @@
     <ol class="guide-steps">
       <li><span>01</span><div><strong>选择“开始制作”或“一键成片”</strong><p>常规制作生成一个带语音和字幕的预览镜头；一键成片会逐镜生成、配音、烧录字幕并合片。</p></div></li>
       <li><span>02</span><div><strong>故事与视觉结构化规划</strong><p>模型输出必须通过 JSON 校验；失败会自动重试，而不是把空文本流入下游。</p></div></li>
-      <li><span>03</span><div><strong>真实调用视频与语音渠道</strong><p>每个镜头都会分别生成视频和语音，再用 FFmpeg 降低原生音轨、混入对白并烧录中文字幕。</p></div></li>
+      <li><span>03</span><div><strong>原生声画优先、外部语音兜底</strong><p>MiniMax H3 镜头优先保留同步对白、情绪、音效与配乐；没有原生音轨时才调用语音渠道，并按对白时间窗烧录中文字幕。</p></div></li>
       <li><span>04</span><div><strong>技术质检拥有否决权</strong><p>系统检查每镜和最终合片的视频轨、音轨、字幕标记和时长；未通过时项目标记失败。</p></div></li>
     </ol>
 

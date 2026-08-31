@@ -65,16 +65,17 @@ async def video_generation_status(
         )
     native_audio = bool(
         channel
-        and channel.provider == "minimax"
-        and channel.model_name.casefold() == "minimax-h3"
+        and channel.provider.casefold() == "minimax"
+        and channel.model_name.casefold().startswith("minimax-h3")
     )
     return {
-        "ready": channel is not None and speech_channel is not None,
+        "ready": channel is not None and (native_audio or speech_channel is not None),
         "provider": channel.provider if channel else None,
         "model": channel.model_name if channel else None,
         "speech_ready": speech_channel is not None,
         "speech_model": speech_channel.model_name if speech_channel else None,
         "native_audio": native_audio,
+        "audio_strategy": "native_h3" if native_audio else "external_tts",
         "latest_job": video_job_payload(latest_job) if latest_job else None,
     }
 

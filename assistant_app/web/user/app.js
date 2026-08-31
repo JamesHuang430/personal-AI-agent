@@ -951,8 +951,8 @@ const productionStages = {
   },
   media: {
     avatar: '制', role: '媒体制作 AGENT · 工具执行', status: '等待上游',
-    title: '真实视频、语音、混音和字幕', summary: '调用已配置的视频与语音渠道，再由 FFmpeg 合成带对白和烧录字幕的镜头。',
-    evidence: ['✓ 视频渠道任务', '✓ Speech 配音任务', '✓ FFmpeg 混音与字幕'], deliverable: '可播放 MP4', meta: '视频轨 / 语音轨 / 烧录字幕',
+    title: '原生声画、兜底配音和字幕', summary: '优先保留 H3 同步生成的对白、情绪、音效和配乐；没有原生音轨时才调用 Speech 兜底。',
+    evidence: ['✓ H3 原生声画', '✓ 单一说话者', '✓ 定时烧录字幕'], deliverable: '可播放 MP4', meta: '原生音轨 / TTS 兜底 / 烧录字幕',
   },
   quality: {
     avatar: '审', role: '质检 AGENT · 否决门禁', status: '等待媒体',
@@ -1095,7 +1095,7 @@ function renderDirectorShots(project) {
   $('#director-shot-strip').innerHTML = project.shots.map((shot) => `
     <button class="shot-card ${shot.status === 'completed' ? 'approved' : shot.status === 'processing' ? 'selected' : ''}" type="button" data-video-job="${escapeHtml(shot.video?.id || '')}">
       <div class="shot-frame frame-wide"><span>${shot.sequence}</span><i></i></div>
-      <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}${shot.has_burned_subtitles ? ' · 配音+字幕' : ''}</small>
+      <strong>${escapeHtml(shot.title)}</strong><small>${escapeHtml(shot.seconds)}s · ${escapeHtml(videoStatusLabel(shot.status))}${shot.has_burned_subtitles ? ` · ${shot.native_audio ? '原生声画+字幕' : '兜底配音+字幕'}` : ''}</small>
       ${shot.speech_text ? `<small>${escapeHtml(shot.speaker || '旁白')}：${escapeHtml(shot.speech_text)}</small>` : ''}
     </button>`).join('');
   $('#shot-heading').nextElementSibling.textContent = `${project.completed_shots} / ${project.planned_shots} 镜已生成`;
@@ -1106,8 +1106,8 @@ function showDirectorStart(oneClick = false) {
   const title = $('#director-start-dialog h2');
   title.textContent = oneClick ? '一键成片' : '开始制作电影';
   $('#director-start-intro').textContent = oneClick
-    ? '总导演编排器将调度 4 位执行 Agent，逐镜生成视频和语音、烧录字幕并最终合片。'
-    : '总导演编排器会生成一个带真实配音和烧录字幕的预览镜头。';
+    ? '总导演编排器将调度 4 位执行 Agent，逐镜生成同步表演、原生声音和定时字幕，并最终合片。'
+    : '总导演编排器会生成一个带同步对白、情绪声音和定时字幕的预览镜头。';
   updateDirectorModeSummary();
   $('#director-start-dialog').showModal();
   window.setTimeout(() => $('#director-premise').focus(), 80);
@@ -1345,7 +1345,7 @@ async function loadVideoReadiness() {
   panel.classList.add('checking');
   mark.textContent = '…';
   title.textContent = '正在检查真实生成条件';
-  detail.textContent = '确认是否已经同时启用视频和语音渠道。';
+  detail.textContent = '确认视频渠道以及原生音频或兜底语音能力。';
   $('#guide-refresh-status').disabled = true;
   try {
     const result = await api('/videos/status');
@@ -1354,9 +1354,11 @@ async function loadVideoReadiness() {
     mark.textContent = result.ready ? '✓' : '!';
     title.textContent = result.ready
       ? `可以真实生成 · ${result.model}`
-      : '暂时不能真实生成 · 视频或语音渠道未启用';
-    const audio = result.native_audio ? '原生音轨会降至背景音量，并混入独立 Speech 配音。' : '系统会混入独立 Speech 配音。';
-    detail.textContent = `${audio}中文字幕将直接烧录进画面。${latestVideoJobText(result.latest_job)}`;
+      : '暂时不能真实生成 · 缺少可用的视频或音频渠道';
+    const audio = result.native_audio
+      ? '优先保留 H3 同步生成的单人对白、情绪、音效和配乐；仅在没有原生音轨时使用 Speech 兜底。'
+      : '视频没有原生音频能力时，系统使用独立 Speech 配音兜底。';
+    detail.textContent = `${audio}中文字幕按对白时间窗烧录进画面。${latestVideoJobText(result.latest_job)}`;
     return result;
   } catch (error) {
     panel.classList.remove('checking');

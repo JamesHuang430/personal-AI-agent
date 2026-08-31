@@ -15,6 +15,7 @@ from assistant_app.services.director import (
     DIRECTOR_SUBTITLE_FONT_SIZE,
     DirectorProjectNotResumableError,
     _dialogue_voice_filter,
+    _dialogue_window,
     _director_video_size,
     _extract_storyboard_plan,
     _fit_speech_text,
@@ -254,6 +255,30 @@ def test_speech_and_subtitle_helpers_fit_media_duration() -> None:
     assert "[0:a]" not in audio_filter
 
 
+def test_dialogue_window_is_planned_and_clamped_to_the_shot() -> None:
+    assert _dialogue_window(
+        {"speech_text": "开始。", "dialogue_start_seconds": 0, "dialogue_end_seconds": 1},
+        4.0,
+    ) == (0.0, 1.0)
+    assert _dialogue_window(
+        {
+            "speech_text": "你终于来了。",
+            "dialogue_start_seconds": 1.25,
+            "dialogue_end_seconds": 3.5,
+        },
+        4.0,
+    ) == (1.25, 3.5)
+    start, end = _dialogue_window(
+        {
+            "speech_text": "这句对白很长但仍然不能跑到镜头外。",
+            "dialogue_start_seconds": 99,
+            "dialogue_end_seconds": 120,
+        },
+        4.0,
+    )
+    assert 0 <= start < end <= 4.0
+
+
 def test_storyboard_markdown_becomes_distinct_per_shot_plan() -> None:
     content = """
 ### 镜头 01：00-12s 雾林远景
@@ -334,6 +359,9 @@ def test_video_prompt_combines_unique_shot_with_shared_continuity() -> None:
     assert first_prompt != second_prompt
     assert "进入雾林" not in second_prompt
     assert "南瓜灯从树后漂出" in second_prompt
-    assert "自然、连续、与说话节奏一致" in second_prompt
+    assert "准确说出且只说台词" in second_prompt
     assert "闪闪，你在哪里" in second_prompt
+    assert "只允许上述一句可辨识人声" in second_prompt
+    assert "对白出现时音乐自动降低" in second_prompt
+    assert "系统将按上述对白时间窗" in second_prompt
     assert "红围巾" in first_prompt and "红围巾" in second_prompt

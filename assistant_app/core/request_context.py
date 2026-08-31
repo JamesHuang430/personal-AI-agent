@@ -98,15 +98,16 @@ class RequestContextMiddleware:
 
                 request_content_type = headers.get("content-type", "")
                 response_content_type = response_headers.get("content-type", "")
+                log_source = (
+                    "admin-api"
+                    if "Operations" in str(getattr(application, "title", ""))
+                    else "assistant-api"
+                )
                 await record_request_log(
                     runtime,
                     request_id=request_id,
                     category="http",
-                    source=(
-                        "admin-api"
-                        if scope.get("path", "").startswith("/api/v1/admin")
-                        else "assistant-api"
-                    ),
+                    source=log_source,
                     actor=actor,
                     method=scope.get("method"),
                     path=scope.get("path"),

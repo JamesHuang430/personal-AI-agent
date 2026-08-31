@@ -1528,23 +1528,60 @@ document.querySelectorAll('[data-video-library-filter]').forEach((button) => {
 document.querySelectorAll('[data-stage]').forEach((button) => {
   button.addEventListener('click', () => renderProductionStage(button.dataset.stage));
 });
+
+let directorApprovalResolver = null;
+function settleDirectorApproval(approved) {
+  const dialog = $('#director-approval-dialog');
+  if (dialog.open) dialog.close();
+  if (!directorApprovalResolver) return;
+  const resolve = directorApprovalResolver;
+  directorApprovalResolver = null;
+  resolve(approved);
+}
+function showDirectorApproval({ title, premise, resolution, estimatedShots }) {
+  $('#director-approval-title').textContent = title;
+  $('#director-approval-story').textContent = premise;
+  $('#director-approval-video-label').textContent = `通过后以 ${resolution} 生成视频`;
+  $('#director-approval-video-detail').textContent = `预计调用视频模型生成约 ${estimatedShots} 个镜头`;
+  const dialog = $('#director-approval-dialog');
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+  $('#director-approval-confirm').focus();
+  return new Promise((resolve) => {
+    directorApprovalResolver = resolve;
+  });
+}
+$('#director-approval-close').addEventListener('click', () => settleDirectorApproval(false));
+$('#director-approval-cancel').addEventListener('click', () => settleDirectorApproval(false));
+$('#director-approval-confirm').addEventListener('click', () => settleDirectorApproval(true));
+$('#director-approval-dialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  settleDirectorApproval(false);
+});
 $('#continue-production').addEventListener('click', async () => {
   if (!activeDirectorProject) return;
+  const button = $('#continue-production');
   const awaitingConfirmation = activeDirectorProject.status === 'awaiting_confirmation';
   if (!awaitingConfirmation && activeDirectorProject.status !== 'failed') {
     notify('当前项目不需要确认或继续制作。');
     return;
   }
   if (awaitingConfirmation) {
+    button.disabled = true;
     const estimatedShots = activeDirectorProject.one_click
       ? Math.ceil(activeDirectorProject.target_seconds / 12)
       : 1;
-    const confirmed = window.confirm(
-      `请最后确认故事内容：\n\n${activeDirectorProject.premise}\n\n确认后将先进行至少两轮文本预演；只有总导演评分达到 90 分，才会以 ${activeDirectorProject.resolution} 调用视频模型生成约 ${estimatedShots} 个镜头。确认开始吗？`,
-    );
-    if (!confirmed) return;
+    const confirmed = await showDirectorApproval({
+      title: '确认故事并开始预演',
+      premise: activeDirectorProject.premise,
+      resolution: activeDirectorProject.resolution,
+      estimatedShots,
+    });
+    if (!confirmed) {
+      button.disabled = false;
+      return;
+    }
   }
-  const button = $('#continue-production');
   button.disabled = true;
   try {
     const action = awaitingConfirmation ? 'approve' : 'resume';
@@ -1641,7 +1678,15 @@ $('#director-start-form').addEventListener('submit', async (event) => {
   const estimatedShots = Math.ceil(seconds / 12);
   const resolution = $('#director-resolution').value;
   const requireStoryConfirmation = $('#director-confirm-story').checked;
-  if (!requireStoryConfirmation && directorOneClickMode && !window.confirm(`你已关闭故事确认。系统会先进行至少两轮文本预演，达到 90 分后以 ${resolution} 生成约 ${estimatedShots} 个视频片段。确认立即开始预演吗？`)) return;
+  if (!requireStoryConfirmation && directorOneClickMode) {
+    const confirmed = await showDirectorApproval({
+      title: '确认跳过故事复核并开始预演',
+      premise: $('#director-premise').value.trim(),
+      resolution,
+      estimatedShots,
+    });
+    if (!confirmed) return;
+  }
   const button = $('#director-start-submit');
   button.disabled = true;
   button.textContent = '正在匹配 Agent 模型…';

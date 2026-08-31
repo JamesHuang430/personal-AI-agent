@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 私人 AI 助理与导演工作室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=1.0">
+  <link rel="stylesheet" href="/static/styles.css?v=1.1">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -359,6 +359,25 @@
     </form>
   </dialog>
 
+  <dialog id="director-approval-dialog" class="modal director-approval-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">DIRECTOR PREFLIGHT</p><h2 id="director-approval-title">确认故事并开始预演</h2></div>
+      <button id="director-approval-close" class="close-btn" type="button" aria-label="关闭确认窗口">×</button>
+    </div>
+    <p class="director-approval-intro">确认后先进行文本预演，通过总导演门禁后才会调用视频模型。</p>
+    <section class="director-approval-story" aria-labelledby="director-approval-story-label">
+      <strong id="director-approval-story-label">本次确认的故事</strong>
+      <p id="director-approval-story"></p>
+    </section>
+    <div class="director-approval-guardrails">
+      <div><span>文</span><p><strong>至少两轮文本预演</strong><small>先检查故事、分镜和视频提示词</small></p></div>
+      <div><span>90</span><p><strong>总导演否决门禁</strong><small>评分不足不会调用视频模型</small></p></div>
+      <div><span>影</span><p><strong id="director-approval-video-label">通过后生成视频</strong><small id="director-approval-video-detail">将显示清晰度和预计镜头数</small></p></div>
+    </div>
+    <p class="director-approval-warning">确认后文本 Agent 会立即开始工作；视频费用仅在预演达到门禁后产生。</p>
+    <div class="director-approval-actions"><button id="director-approval-cancel" class="ghost-btn" type="button">暂不开始</button><button id="director-approval-confirm" class="studio-primary" type="button">确认并开始文本预演 →</button></div>
+  </dialog>
+
   <dialog id="studio-guide-dialog" class="modal studio-guide-modal">
     <div class="modal-header">
       <div><p class="eyebrow purple">DIRECTOR CONSOLE GUIDE</p><h2>短剧制作使用指南</h2></div>
@@ -394,6 +413,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=1.4" defer></script>
+  <script src="/static/app.js?v=1.5" defer></script>
 </body>
 </html>

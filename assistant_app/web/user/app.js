@@ -18,6 +18,8 @@ let activeDirectorProject = null;
 let directorProjectTimer = null;
 let directorOneClickMode = false;
 let selectedDirectorStage = null;
+let activeStudioView = window.localStorage.getItem('assistant-studio-view') === 'library' ? 'library' : 'production';
+let videoLibraryFilter = 'all';
 let selectedAttachments = [];
 let attachmentUploads = 0;
 const customModelValue = '__custom__';
@@ -660,6 +662,7 @@ function renderArtifacts(message, result) {
     card.querySelector('a').addEventListener('click', (event) => {
       event.preventDefault();
       switchWorkspace('studio');
+      switchStudioView('production');
       loadDirectorProject(project.id);
     });
     updateDirectorArtifactCard(project, card);
@@ -1030,6 +1033,25 @@ const productionStages = {
   },
 };
 
+function switchStudioView(view) {
+  activeStudioView = view === 'library' ? 'library' : 'production';
+  $('#studio-production-view').classList.toggle('hidden', activeStudioView !== 'production');
+  $('#studio-library-view').classList.toggle('hidden', activeStudioView !== 'library');
+  document.querySelectorAll('[data-studio-view]').forEach((button) => {
+    const active = button.dataset.studioView === activeStudioView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (!$('#studio-workspace').classList.contains('hidden')) {
+    $('#workspace-title').textContent = activeStudioView === 'library' ? '视频作品库' : 'AI 导演工作室';
+    $('#workspace-subtitle').textContent = activeStudioView === 'library'
+      ? '历史成片、镜头片段与失败记录'
+      : '一人导演，一组 Agent 把关';
+  }
+  window.localStorage.setItem('assistant-studio-view', activeStudioView);
+  if (activeStudioView === 'library' && currentUser) loadVideoGallery();
+}
+
 function switchWorkspace(mode) {
   const isStudio = mode === 'studio';
   $('#chat-workspace').classList.toggle('hidden', isStudio);
@@ -1045,7 +1067,7 @@ function switchWorkspace(mode) {
   setSidebarOpen(false);
   window.localStorage.setItem('assistant-workspace', mode);
   if (isStudio && currentUser) {
-    loadVideoGallery();
+    switchStudioView(activeStudioView);
     loadDirectorProjects();
   }
 }
@@ -1087,6 +1109,7 @@ function renderDirectorProjectList(projects) {
   list.querySelectorAll('[data-director-project]').forEach((button) => {
     button.addEventListener('click', () => {
       selectedDirectorStage = null;
+      switchStudioView('production');
       loadDirectorProject(button.dataset.directorProject);
     });
   });
@@ -1273,7 +1296,7 @@ function videoCreatedAt(value) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
-function renderStudioVideo(job) {
+function renderStudioVideo(job, project = null) {
   const card = document.createElement('article');
   card.className = `video-result-card ${job.status}`;
 
@@ -1301,7 +1324,8 @@ function renderStudioVideo(job) {
   detail.className = 'video-result-detail';
   const heading = document.createElement('div');
   heading.className = 'video-result-heading';
-  heading.innerHTML = `<strong>真实生成镜头</strong><em>${escapeHtml(videoStatusLabel(job.status))}</em>`;
+  const title = project ? `镜头片段 · ${project.title}` : '独立视频';
+  heading.innerHTML = `<strong>${escapeHtml(title)}</strong><em>${escapeHtml(videoStatusLabel(job.status))}</em>`;
   const meta = document.createElement('small');
   meta.textContent = `${job.seconds} 秒 · ${job.size} · ${job.resolution || '768P'}${videoCreatedAt(job.created_at) ? ` · ${videoCreatedAt(job.created_at)}` : ''}`;
   const prompt = document.createElement('p');
@@ -1345,31 +1369,53 @@ async function loadVideoGallery() {
     } catch (_error) {
       // Individual generated clips stay playable if the director project list is unavailable.
     }
-    const currentProjectId = activeDirectorProject?.id;
-    const currentJobIds = new Set(
-      (activeDirectorProject?.shots || []).map((shot) => shot.video?.id).filter(Boolean),
-    );
-    const finalMovies = projects.filter((project) => (
-      project.final_video && (!currentProjectId || project.id === currentProjectId)
-    ));
-    const visibleJobs = (currentProjectId
-      ? jobs.filter((job) => currentJobIds.has(job.id))
-      : jobs.slice(0, 12));
+    const projectByJobId = new Map();
+    projects.forEach((project) => {
+      (project.shots || []).forEach((shot) => {
+        if (shot.video?.id) projectByJobId.set(shot.video.id, project);
+      });
+    });
+    const finalMovies = projects.filter((project) => project.final_video);
+    const allEntries = [
+      ...finalMovies.map((project) => ({
+        type: 'final',
+        createdAt: project.created_at || '',
+        project,
+      })),
+      ...jobs.map((job) => ({
+        type: job.status === 'failed' ? 'failed' : 'clip',
+        createdAt: job.created_at || '',
+        job,
+        project: projectByJobId.get(job.id) || null,
+      })),
+    ].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+    const visibleEntries = videoLibraryFilter === 'all'
+      ? allEntries
+      : allEntries.filter((entry) => entry.type === videoLibraryFilter);
+    $('#video-library-count').textContent = String(allEntries.length);
     list.replaceChildren();
-    if (!visibleJobs.length && !finalMovies.length) {
-      list.innerHTML = '<div class="video-gallery-empty"><span>▶</span><strong>当前项目还没有真实视频</strong><small>媒体 Agent 提交任务后会自动出现在这里</small></div>';
-      summary.textContent = currentProjectId
-        ? '仅展示当前项目；生成后可直接播放和下载'
-        : '生成中的视频会自动刷新，完成后可直接播放和下载';
+    if (!visibleEntries.length) {
+      const emptyLabels = {
+        all: ['还没有历史视频', '生成后的完整成片与镜头会保存在这里'],
+        final: ['还没有完整成片', '一键成片完成后会出现在这里'],
+        clip: ['还没有镜头片段', '媒体 Agent 生成的镜头会出现在这里'],
+        failed: ['没有失败记录', '当前历史任务没有失败项'],
+      };
+      const [emptyTitle, emptyDetail] = emptyLabels[videoLibraryFilter] || emptyLabels.all;
+      list.innerHTML = `<div class="video-gallery-empty"><span>▶</span><strong>${emptyTitle}</strong><small>${emptyDetail}</small></div>`;
+      summary.textContent = '作品库只展示属于你的生成记录';
       return;
     }
 
-    list.append(...finalMovies.map(renderDirectorMovie), ...visibleJobs.map(renderStudioVideo));
-    const completed = visibleJobs.filter((job) => job.status === 'completed').length;
-    const active = visibleJobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
-    summary.textContent = currentProjectId
-      ? `当前项目 · ${finalMovies.length} 部合片 · ${completed}/${visibleJobs.length} 个镜头已完成${active ? ` · ${active} 条正在生成` : ''}`
-      : `${finalMovies.length} 部合片 · ${completed} 个生成片段${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
+    list.append(...visibleEntries.map((entry) => (
+      entry.type === 'final'
+        ? renderDirectorMovie(entry.project)
+        : renderStudioVideo(entry.job, entry.project)
+    )));
+    const completed = jobs.filter((job) => job.status === 'completed').length;
+    const failed = jobs.filter((job) => job.status === 'failed').length;
+    const active = jobs.filter((job) => ['queued', 'processing'].includes(job.status)).length;
+    summary.textContent = `${finalMovies.length} 部完整成片 · ${completed} 个已完成片段 · ${failed} 条失败记录${active ? ` · ${active} 条正在生成` : ''} · 仅你本人可查看`;
     if (active) videoGalleryTimer = window.setTimeout(loadVideoGallery, 5000);
   } catch (error) {
     list.innerHTML = `<div class="video-gallery-empty failed"><span>!</span><strong>成片记录加载失败</strong><small>${escapeHtml(error.message)}</small></div>`;
@@ -1438,6 +1484,18 @@ function renderProductionStage(key, remember = true) {
 
 document.querySelectorAll('[data-workspace]').forEach((button) => {
   button.addEventListener('click', () => switchWorkspace(button.dataset.workspace));
+});
+document.querySelectorAll('[data-studio-view]').forEach((button) => {
+  button.addEventListener('click', () => switchStudioView(button.dataset.studioView));
+});
+document.querySelectorAll('[data-video-library-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    videoLibraryFilter = button.dataset.videoLibraryFilter;
+    document.querySelectorAll('[data-video-library-filter]').forEach((item) => {
+      item.classList.toggle('active', item === button);
+    });
+    loadVideoGallery();
+  });
 });
 document.querySelectorAll('[data-stage]').forEach((button) => {
   button.addEventListener('click', () => renderProductionStage(button.dataset.stage));

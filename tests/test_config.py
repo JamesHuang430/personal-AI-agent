@@ -30,3 +30,16 @@ def test_model_channel_only_configures_provider() -> None:
 
     assert "model_name" not in payload.model_dump()
     assert "model_names" not in payload.model_dump()
+
+
+def test_pi_runtime_requires_dedicated_shared_secret() -> None:
+    with pytest.raises(ValidationError, match="Pi runtime requires"):
+        Settings(_env_file=None, agent_runtime="pi", pi_runtime_shared_secret="short")
+
+    settings = Settings(
+        _env_file=None,
+        agent_runtime="pi",
+        pi_runtime_shared_secret="p" * 32,
+    )
+
+    assert settings.agent_runtime == "pi"

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from assistant_app import __version__
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.pi_runtime import pi_runtime_readiness
 
 router = APIRouter()
 
@@ -24,6 +25,8 @@ async def liveness() -> dict[str, str]:
 async def readiness(request: Request) -> JSONResponse:
     runtime: RuntimeDependencies = request.app.state.runtime
     checks = await runtime.readiness()
+    if request.app.state.settings.agent_runtime == "pi":
+        checks["pi_runtime"] = await pi_runtime_readiness(request.app.state.settings)
     ready = all(check.status == "ok" for check in checks.values())
     body = {
         "status": "ok" if ready else "degraded",

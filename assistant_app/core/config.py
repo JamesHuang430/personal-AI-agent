@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     mcp_max_result_chars: int = Field(default=30_000, ge=2_000, le=100_000)
     document_max_bytes: int = Field(default=20_000_000, ge=100_000, le=50_000_000)
     document_max_files_per_message: int = Field(default=4, ge=1, le=8)
+    agent_runtime: Literal["python", "pi"] = "python"
+    pi_runtime_url: str = "http://pi-runtime:8787"
+    pi_runtime_tool_bridge_url: str = (
+        "http://assistant-api:8000/api/v1/internal/pi/tools/execute"
+    )
+    pi_runtime_shared_secret: str = ""
+    pi_runtime_timeout_seconds: float = Field(default=120.0, ge=10.0, le=300.0)
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -59,6 +66,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_placeholder_secrets_in_production(self) -> Settings:
+        if self.agent_runtime == "pi" and (
+            len(self.pi_runtime_shared_secret) < 32
+            or "change-this" in self.pi_runtime_shared_secret.lower()
+        ):
+            raise ValueError(
+                "Pi runtime requires a dedicated shared secret of at least 32 characters"
+            )
         if self.environment != "production":
             return self
 

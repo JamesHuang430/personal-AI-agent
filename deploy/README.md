@@ -31,6 +31,12 @@ soon as a domain is available; never commit the private key.
 Knowledge-graph queries do not expose a separate database port. All access goes
 through the authenticated application API and is scoped to the current user.
 
+The optional Pi Agent Runtime is enabled with `ASSISTANT_AGENT_RUNTIME=pi` and
+a dedicated `PI_RUNTIME_SHARED_SECRET` of at least 32 characters in
+`deploy/.env`. The deployment script then builds and starts the isolated
+`pi-runtime` profile automatically. Set the runtime back to `python` and rerun
+the deployment script for an immediate rollback.
+
 When document ingestion is implemented, enable object storage with:
 
 ```bash

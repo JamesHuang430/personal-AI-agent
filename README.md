@@ -85,6 +85,13 @@ SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内
 远端旧服务到新助理的并行部署与切换步骤见 [docs/deployment-transition.md](docs/deployment-transition.md)。
 生产部署使用 Nginx 作为唯一 Web 入口，并在 `18000`（用户端）和 `19000`（运营后台）终止 HTTPS；详见 [deploy/README.md](deploy/README.md)。
 
+## 可选 Pi Agent Runtime PoC
+
+默认对话仍使用现有 Python Runtime。仓库包含一个隔离的 Pi Agent Core sidecar PoC，
+用于对比通用工具循环、并行执行和运行状态能力；它不会获得数据库、文件系统或媒体渠道
+权限。启用、回滚、安全边界与验收清单见
+[docs/pi-runtime-poc.md](docs/pi-runtime-poc.md)。
+
 ## 本地 Python 开发
 
 ```powershell

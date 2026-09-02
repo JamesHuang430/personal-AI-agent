@@ -46,6 +46,10 @@ services:
       ASSISTANT_MCP_MAX_RESULT_CHARS: ${ASSISTANT_MCP_MAX_RESULT_CHARS:-30000}
       ASSISTANT_DOCUMENT_MAX_BYTES: ${ASSISTANT_DOCUMENT_MAX_BYTES:-20000000}
       ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE: ${ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE:-4}
+      ASSISTANT_AGENT_RUNTIME: ${ASSISTANT_AGENT_RUNTIME:-python}
+      ASSISTANT_PI_RUNTIME_URL: ${ASSISTANT_PI_RUNTIME_URL:-http://pi-runtime:8787}
+      ASSISTANT_PI_RUNTIME_SHARED_SECRET: ${PI_RUNTIME_SHARED_SECRET:-}
+      ASSISTANT_PI_RUNTIME_TIMEOUT_SECONDS: ${ASSISTANT_PI_RUNTIME_TIMEOUT_SECONDS:-120}
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +74,27 @@ services:
       - app_net
       - data_net
       - mcp_net
+
+  pi-runtime:
+    <<: *service-defaults
+    profiles: ["pi"]
+    build:
+      context: ./pi_runtime
+      dockerfile: Dockerfile
+    image: personal-ai-assistant-pi-runtime:0.1.0
+    environment:
+      PORT: 8787
+      PI_RUNTIME_SHARED_SECRET: ${PI_RUNTIME_SHARED_SECRET:-}
+      PI_RUNTIME_TOOL_BRIDGE_URL: ${ASSISTANT_PI_RUNTIME_TOOL_BRIDGE_URL:-http://assistant-api:8000/api/v1/internal/pi/tools/execute}
+    expose:
+      - "8787"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - app_net
 
   admin-api:
     image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}

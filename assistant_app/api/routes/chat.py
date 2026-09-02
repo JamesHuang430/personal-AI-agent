@@ -39,7 +39,6 @@ from assistant_app.services.memory import (
 from assistant_app.services.model_gateway import (
     ModelChannelUnavailableError,
     ModelRateLimitError,
-    chat_completion,
     list_available_models,
 )
 from assistant_app.services.music_gateway import (
@@ -48,6 +47,7 @@ from assistant_app.services.music_gateway import (
     music_job_payload,
     run_music_job,
 )
+from assistant_app.services.pi_runtime import PiRuntimeError, routed_chat_completion
 from assistant_app.services.speech_gateway import (
     SpeechChannelUnavailableError,
     create_speech_job,
@@ -319,7 +319,7 @@ async def chat(
             user.id,
             payload.message.strip(),
         )
-        result = await chat_completion(
+        result = await routed_chat_completion(
             request.app.state.runtime,
             request.app.state.settings,
             payload.model,
@@ -500,6 +500,8 @@ async def chat(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (APIConnectionError, APITimeoutError) as exc:
         raise HTTPException(status_code=502, detail="无法连接当前大模型渠道") from exc
+    except PiRuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except APIStatusError as exc:
         raise HTTPException(
             status_code=502,

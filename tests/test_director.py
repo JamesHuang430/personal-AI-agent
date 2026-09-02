@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from assistant_app.api.routes.director import (
     DirectorProjectRemasterPayload,
 )
 from assistant_app.core.config import Settings
-from assistant_app.db.models import DirectorProject
+from assistant_app.db.models import DirectorAgentRun, DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
     DIRECTOR_PREFLIGHT_MIN_SCORE,
@@ -18,6 +19,7 @@ from assistant_app.services.director import (
     _dialogue_voice_filter,
     _dialogue_window,
     _director_video_size,
+    _execute_agent_run,
     _extract_storyboard_plan,
     _fit_speech_text,
     _sanitize_character_voices,
@@ -158,6 +160,87 @@ async def test_director_project_is_flushed_before_agent_runs(
     assert project.status == "awaiting_confirmation"
     assert project.current_stage == "story_confirmation"
     assert session.events == ["add_project", "flush_project", "add_runs:4"]
+
+
+@pytest.mark.asyncio
+async def test_agent_run_keeps_detached_visual_result_in_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    user_id = uuid4()
+    project = DirectorProject(
+        id=project_id,
+        user_id=user_id,
+        title="晨露",
+        premise="小刺猬帮助萤火精灵寻找晨露",
+        target_seconds=30,
+        aspect_ratio="9:16",
+        visual_style="温暖动画",
+        one_click=False,
+    )
+    run = DirectorAgentRun(
+        id=uuid4(),
+        project_id=project_id,
+        user_id=user_id,
+        agent_key="visual",
+        agent_name="视觉 Agent",
+        sequence=2,
+        model_name="qwen3.7-max",
+        status="pending",
+        result_data={},
+    )
+    visual = {
+        "continuity": {
+            "characters": [
+                {"name": "团团", "appearance": "浅棕短刺", "wardrobe": "红围巾"}
+            ]
+        },
+        "shots": [
+            {
+                "sequence": 1,
+                "title": "发现晨露",
+                "action": "团团拨开叶片",
+                "speech_text": "找到了。",
+            }
+        ],
+    }
+    content = (
+        "【判断摘要】连续性和镜头均可执行。\n"
+        "【交付物】视觉方案。\n"
+        f"【视觉JSON】{json.dumps(visual, ensure_ascii=False)}"
+    )
+    persisted: dict[str, object] = {}
+
+    async def no_op(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def completed_context(*_args: object) -> str:
+        return ""
+
+    async def completion(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"content": content}
+
+    async def update_run(
+        _runtime: object, _run_id: object, **values: object
+    ) -> None:
+        persisted.update(values)
+
+    monkeypatch.setattr("assistant_app.services.director._update_project", no_op)
+    monkeypatch.setattr("assistant_app.services.director._update_run", update_run)
+    monkeypatch.setattr(
+        "assistant_app.services.director._completed_context", completed_context
+    )
+    monkeypatch.setattr("assistant_app.services.director.agent_text_completion", completion)
+
+    await _execute_agent_run(
+        SimpleNamespace(), Settings(_env_file=None), project, run, progress=25
+    )
+
+    assert persisted["result_data"] == run.result_data
+    assert run.status == "completed"
+    assert run.error_message is None
+    assert run.result_data["continuity"]["characters"][0]["name"] == "团团"
+    assert len(run.result_data["shots"]) == 1
 
 
 def test_director_preflight_requires_revised_visual_and_score_gate() -> None:

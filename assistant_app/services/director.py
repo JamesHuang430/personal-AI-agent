@@ -1541,6 +1541,14 @@ async def _execute_agent_run(
         deliverable=deliverable,
         result_data=result_data,
     )
+    # ``run`` was loaded by the workflow's original session, while ``_update_run``
+    # persists through a separate session. Keep the detached in-memory instance in
+    # sync because the director preflight consumes it immediately afterwards.
+    run.status = "completed"
+    run.error_message = None
+    run.decision_summary = summary
+    run.deliverable = deliverable
+    run.result_data = result_data
 
 
 async def _run_director_preflight(

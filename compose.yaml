@@ -16,8 +16,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: personal-ai-assistant-api:0.1.0
-    environment:
+    image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
+    environment: &assistant-environment
       ASSISTANT_ENVIRONMENT: ${ASSISTANT_ENVIRONMENT:-development}
       ASSISTANT_LOG_LEVEL: ${ASSISTANT_LOG_LEVEL:-INFO}
       ASSISTANT_LOG_JSON: ${ASSISTANT_LOG_JSON:-true}
@@ -64,6 +64,31 @@ services:
       - "127.0.0.1:${ASSISTANT_API_PORT:-18000}:8000"
     volumes:
       - generated_files:/data/generated
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - edge_net
+      - app_net
+      - data_net
+      - mcp_net
+
+  worker:
+    <<: *service-defaults
+    image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
+    command: ["python", "-m", "assistant_app.worker"]
+    environment: *assistant-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - generated_files:/data/generated
+    healthcheck:
+      disable: true
     read_only: true
     tmpfs:
       - /tmp:size=128m,noexec,nosuid

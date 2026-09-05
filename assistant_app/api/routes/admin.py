@@ -327,6 +327,8 @@ def _email_channel_payload(item: EmailChannel | None) -> dict[str, object]:
 
 
 def _request_log_payload(item: RequestLog, *, detail: bool = False) -> dict[str, object]:
+    from assistant_app.services.request_logging import safe_stored_payload
+
     payload: dict[str, object] = {
         "id": str(item.id),
         "request_id": item.request_id,
@@ -344,8 +346,8 @@ def _request_log_payload(item: RequestLog, *, detail: bool = False) -> dict[str,
     if detail:
         payload.update(
             {
-                "input_payload": item.input_payload,
-                "output_payload": item.output_payload,
+                "input_payload": safe_stored_payload(item.input_payload),
+                "output_payload": safe_stored_payload(item.output_payload),
                 "error_message": item.error_message,
             }
         )

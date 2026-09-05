@@ -6,7 +6,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
+from assistant_app.db.models import ModelChannel
+from assistant_app.services.model_gateway import ModelRateLimitError, _enforce_qps
 from assistant_app.services.web_search import WebSearchError, fetch_webpage, search_web
 
 router = APIRouter()
@@ -33,7 +36,21 @@ async def execute_pi_tool(
 
     allowed_key = f"pi-runtime:web-urls:{payload.run_id}"
     try:
-        if payload.name == "web_search":
+        if payload.name == "model_request_permit":
+            channel_id = await request.app.state.runtime.redis.get(
+                f"pi-runtime:channel:{payload.run_id}"
+            )
+            if not channel_id:
+                raise HTTPException(403, "Pi run expired or unknown")
+            async with request.app.state.runtime.sessions() as session:
+                channel = await session.scalar(select(ModelChannel).where(
+                    ModelChannel.id == UUID(channel_id),
+                ))
+            if channel is None:
+                raise HTTPException(503, "Model channel unavailable")
+            await _enforce_qps(request.app.state.runtime, channel)
+            result = {"allowed": True}
+        elif payload.name == "web_search":
             result = await search_web(
                 settings,
                 str(payload.arguments.get("query", "")),
@@ -60,7 +77,7 @@ async def execute_pi_tool(
             result = await fetch_webpage(settings, url)
         else:
             raise HTTPException(status_code=404, detail="Tool is not allowed through Pi Runtime")
-    except (ValueError, WebSearchError) as exc:
+    except (ValueError, WebSearchError, ModelRateLimitError) as exc:
         return {"is_error": True, "message": str(exc)}
     except TimeoutError:
         return {"is_error": True, "message": "联网检索超时"}

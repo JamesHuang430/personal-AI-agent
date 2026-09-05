@@ -37,3 +37,4 @@ work/
 
 # Node dependencies for the optional Pi Runtime sidecar
 pi_runtime/node_modules/
+tests/web/node_modules/

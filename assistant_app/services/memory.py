@@ -31,7 +31,7 @@ from assistant_app.services.age_graph import (
     load_memory_graph,
     upsert_memory_graph,
 )
-from assistant_app.services.model_gateway import logged_model_completion
+from assistant_app.services.model_gateway import logged_model_completion, model_client
 
 logger = logging.getLogger(__name__)
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -92,9 +92,7 @@ async def _active_channel_and_client(
     if channel is None:
         raise RuntimeError("No active model channel")
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
-    return channel, AsyncOpenAI(
-        api_key=api_key, base_url=channel.base_url, timeout=request_timeout
-    )
+    return channel, model_client(runtime, channel, api_key, request_timeout)
 
 
 def _parse_extraction(raw: str) -> MemoryExtraction:
@@ -118,8 +116,11 @@ async def _extract_exchange(
     user_text: str,
     assistant_text: str,
 ) -> MemoryExtraction:
-    system_prompt = """你是私人助理的长期记忆提取器。只输出一个 JSON 对象，不要 Markdown。
-只提取用户明确表达且对未来服务有价值的偏好、事实、目标、事件和约束。
+    system_prompt = """你是视频创作搭档的长期记忆提取器。只输出一个 JSON 对象，不要 Markdown。
+只提取用户明确表达、对后续视频创作有价值的长期偏好与约束，例如视觉风格、叙事节奏、
+常用受众、对白声线、字幕配乐习惯和不喜欢的元素。内容要写明适用的视频创作范围。
+本次作品的一次性设定不要推断为长期喜好；剧本中的人物、经历、关系都是虚构素材，
+除非用户明确说明，否则不要写入用户事实或知识图谱。天气、出行、待办等无关信息不保存。
 助手回答仅用于理解上下文，绝不能作为用户事实来源。不要保存临时闲聊或推测。
 绝对不要提取密码、验证码、授权码、API Key、Token、银行卡号或其他凭证。
 实体 key 只需在本次输出内唯一；关系必须引用已输出的实体 key。
@@ -262,7 +263,7 @@ async def learn_from_exchange(
                         confidence=item.confidence,
                         importance=item.importance,
                         last_confirmed_at=datetime.now(UTC),
-                        extra_data={"source": "user_message"},
+                        extra_data={"source": "user_message", "scope": "video_creation"},
                     )
                     session.add(record)
                     await session.flush()

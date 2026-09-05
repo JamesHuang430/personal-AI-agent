@@ -1,20 +1,51 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import desc, select
 
 from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import SpeechChannel, User, VideoChannel, VideoJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.video_gateway import video_job_payload
+from assistant_app.services.work_queue import enqueue
 
 router = APIRouter()
+
+
+class VideoConfirmation(BaseModel):
+    # Bind the UI's reviewed draft to its immutable generation parameters.
+    draft_hash: str
+
+
+@router.post("/{job_id}/confirm", status_code=202)
+async def confirm_video(
+    job_id: UUID, payload: VideoConfirmation, request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    from assistant_app.services.video_gateway import video_draft_hash
+
+    async with request.app.state.runtime.sessions() as session, session.begin():
+        job = await session.scalar(select(VideoJob).where(
+            VideoJob.id == job_id, VideoJob.user_id == user.id,
+        ).with_for_update())
+        if job is None:
+            raise HTTPException(404, "视频草稿不存在")
+        if payload.draft_hash != video_draft_hash(job):
+            raise HTTPException(409, "草稿参数已变化，请重新查看并确认")
+        if job.status == "awaiting_confirmation":
+            if job.created_at < datetime.now(UTC) - timedelta(hours=24):
+                raise HTTPException(409, "草稿已过期，请重新生成提示词")
+            job.status = "queued"
+            await enqueue(session, "video", job.id)
+        return video_job_payload(job)
 
 
 async def _owned_job(runtime: RuntimeDependencies, user_id: UUID, job_id: UUID) -> VideoJob:

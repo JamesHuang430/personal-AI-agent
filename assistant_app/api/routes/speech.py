@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
@@ -16,7 +16,6 @@ from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.speech_gateway import (
     SpeechChannelUnavailableError,
     create_speech_job,
-    run_speech_job,
     speech_job_payload,
 )
 
@@ -46,7 +45,6 @@ async def _owned_job(runtime: RuntimeDependencies, user_id: UUID, job_id: UUID) 
 async def create_speech(
     payload: SpeechCreatePayload,
     request: Request,
-    background_tasks: BackgroundTasks,
     user: Annotated[User, Depends(current_user)],
 ) -> dict[str, object]:
     try:
@@ -62,12 +60,6 @@ async def create_speech(
         )
     except SpeechChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    background_tasks.add_task(
-        run_speech_job,
-        request.app.state.runtime,
-        request.app.state.settings,
-        job.id,
-    )
     return speech_job_payload(job)
 
 

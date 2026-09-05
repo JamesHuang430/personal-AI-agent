@@ -8,10 +8,12 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -27,6 +29,10 @@ from assistant_app.db.base import Base
 
 class User(Base):
     __tablename__ = "users"
+
+    creative_preferences: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
@@ -266,6 +272,8 @@ class GeneratedFile(Base):
 
 
 class VideoJob(Base):
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "video_jobs"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -295,6 +303,26 @@ class VideoJob(Base):
 
 class DirectorProject(Base):
     __tablename__ = "director_projects"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('awaiting_confirmation', 'awaiting_storyboard', "
+            "'queued', 'processing', 'completed', 'failed')",
+            name="ck_director_project_status",
+        ),
+    )
+
+    personalization: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    feedback: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    review_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    storyboard_approved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
@@ -422,6 +450,8 @@ class DirectorShot(Base):
 
 
 class MusicJob(Base):
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "music_jobs"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -451,6 +481,8 @@ class MusicJob(Base):
 
 
 class SpeechJob(Base):
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "speech_jobs"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -502,6 +534,10 @@ class Conversation(Base):
 
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
+
+    artifacts: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id: Mapped[UUID] = mapped_column(
@@ -560,6 +596,46 @@ class MemoryItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class WorkItem(Base):
+    __tablename__ = "work_items"
+    __table_args__ = (UniqueConstraint("kind", "resource_id", name="uq_work_resource"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    owner: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ChatRun(Base):
+    __tablename__ = "chat_runs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_chat_idempotency"),
+        Index("uq_chat_active_user", "user_id", unique=True,
+              postgresql_where=text("status = 'processing'")),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"))
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
+    response: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    error_status: Mapped[int | None] = mapped_column(Integer)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class MemoryEmbedding(Base):

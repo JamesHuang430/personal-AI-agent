@@ -4,13 +4,16 @@ import re
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 
 from assistant_app.api.dependencies import current_user
-from assistant_app.db.models import User
+from assistant_app.db.models import ChatRun, User
 from assistant_app.services.agent_model_router import route_agent_models
+from assistant_app.services.chat_runs import run_chat_request, update_chat_run
+from assistant_app.services.chat_tools import execute_tools
 from assistant_app.services.conversations import (
     ConversationNotFoundError,
     delete_conversation,
@@ -19,20 +22,15 @@ from assistant_app.services.conversations import (
     prepare_conversation,
     record_assistant_message,
 )
-from assistant_app.services.director import (
-    create_director_project,
-    project_payload,
-)
+from assistant_app.services.creative_preferences import personalization_prompt
 from assistant_app.services.document_skill import (
     document_skill_payload,
     extract_document_context,
     get_owned_documents,
     uploaded_document_payload,
 )
-from assistant_app.services.generated_files import create_generated_file, file_payload
 from assistant_app.services.mcp_runtime import list_mcp_tools
 from assistant_app.services.memory import (
-    learn_from_exchange,
     organize_conversation_session,
     retrieve_memory_context,
 )
@@ -43,25 +41,33 @@ from assistant_app.services.model_gateway import (
 )
 from assistant_app.services.music_gateway import (
     MusicChannelUnavailableError,
-    create_music_job,
-    music_job_payload,
-    run_music_job,
 )
 from assistant_app.services.pi_runtime import PiRuntimeError, routed_chat_completion
 from assistant_app.services.speech_gateway import (
     SpeechChannelUnavailableError,
-    create_speech_job,
-    run_speech_job,
-    speech_job_payload,
 )
 from assistant_app.services.video_gateway import (
     VideoChannelUnavailableError,
-    create_video_job,
-    run_video_job,
-    video_job_payload,
 )
 
 router = APIRouter()
+
+
+@router.get("/runs/{run_id}")
+async def chat_run_status(
+    run_id: UUID, request: Request, user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    async with request.app.state.runtime.sessions() as session:
+        run = await session.scalar(select(ChatRun).where(
+            ChatRun.id == run_id, ChatRun.user_id == user.id,
+        ))
+    if run is None:
+        raise HTTPException(404, "请求记录不存在")
+    return {
+        "run_id": str(run.id), "status": run.status, "error": run.error,
+        "conversation_id": str(run.conversation_id) if run.conversation_id else None,
+        "result": run.response,
+    }
 
 
 _DIRECTOR_PREVIEW_PATTERNS = (
@@ -76,11 +82,6 @@ _DIRECTOR_FULL_PRODUCTION_PATTERNS = (
     r"制作(?:一部|一个|一段)?.{0,12}(?:短剧|电影|视频)",
     r"生成(?:一部|一个|一段)?.{0,12}(?:短剧|电影|视频)",
     r"视频(?:共计|总计|总时长|时长).{0,8}(?:30|60|180|300)\s*秒",
-)
-_VIDEO_CONFIRMATION_PATTERNS = (
-    r"(?:提示词|分镜|方案).{0,8}(?:已确认|确认通过)",
-    r"(?:确认|同意)(?:并|后)?(?:立即|现在)?生成",
-    r"(?:立即|现在)提交视频生成",
 )
 
 
@@ -100,9 +101,6 @@ def director_full_production_requested(
     )
 
 
-def video_generation_confirmed(message: str) -> bool:
-    normalized = re.sub(r"\s+", "", message)
-    return any(re.search(pattern, normalized) for pattern in _VIDEO_CONFIRMATION_PATTERNS)
 
 
 class HistoryMessage(BaseModel):
@@ -285,12 +283,11 @@ async def organize_conversation(
     }
 
 
-@router.post("")
-async def chat(
+async def _execute_chat(
     payload: ChatPayload,
     request: Request,
-    background_tasks: BackgroundTasks,
-    user: Annotated[User, Depends(current_user)],
+    user: User,
+    run,
 ) -> dict[str, object]:
     try:
         if len(payload.file_ids) > request.app.state.settings.document_max_files_per_message:
@@ -312,6 +309,10 @@ async def chat(
             payload.conversation_id,
             payload.message.strip(),
             payload.model,
+            artifacts={"documents": [uploaded_document_payload(d) for d in documents]},
+        )
+        await update_chat_run(
+            request.app.state.runtime, run.id, conversation_id=prepared.conversation.id,
         )
         memory_context = await retrieve_memory_context(
             request.app.state.runtime,
@@ -325,131 +326,33 @@ async def chat(
             payload.model,
             payload.message.strip(),
             prepared.history,
-            memory_context.text,
+            memory_context.text + personalization_prompt({
+                "preferences": getattr(user, "creative_preferences", None) or {},
+            }),
             document_context,
         )
-        files: list[dict[str, object]] = []
-        video_jobs: list[dict[str, object]] = []
-        music_jobs: list[dict[str, object]] = []
-        speech_jobs: list[dict[str, object]] = []
-        director_projects: list[dict[str, object]] = []
-        notices: list[str] = []
-        for tool_call in result.pop("tool_calls", []):
-            arguments = tool_call.get("arguments", {})
-            if tool_call.get("name") == "create_file":
-                record = await create_generated_file(
-                    request.app.state.runtime,
-                    user.id,
-                    str(arguments.get("filename", "assistant-file.md")),
-                    str(arguments.get("content", "")),
+        async def checkpoint(artifacts):
+            owned = await update_chat_run(request.app.state.runtime, run.id, response=artifacts)
+            if not owned:
+                raise HTTPException(409, "请求已失效，已停止后续工具执行")
+
+        calls = result.pop("tool_calls", [])
+        for call in calls:
+            arguments = call.get("arguments")
+            if call.get("name") == "start_director_production" and isinstance(arguments, dict):
+                arguments["one_click"] = director_full_production_requested(
+                    payload.message, arguments,
                 )
-                files.append(file_payload(record))
-                notices.append(f"已生成文件：{record.filename}")
-            elif tool_call.get("name") == "generate_video":
-                prompt = str(arguments.get("prompt", payload.message)).strip()
-                if not video_generation_confirmed(payload.message):
-                    notices.append(
-                        "为避免误耗视频额度，本次只完成提示词准备，尚未提交视频模型。"
-                        f"待确认提示词：{prompt[:1200]}\n"
-                        "确认无误后请明确回复“提示词已确认，立即生成”。"
-                    )
-                    continue
-                job = await create_video_job(
-                    request.app.state.runtime,
-                    user.id,
-                    prompt,
-                    str(arguments.get("seconds")) if arguments.get("seconds") else None,
-                    str(arguments.get("size")) if arguments.get("size") else None,
-                    (
-                        str(arguments.get("resolution"))
-                        if arguments.get("resolution")
-                        else None
-                    ),
-                )
-                background_tasks.add_task(
-                    run_video_job,
-                    request.app.state.runtime,
-                    request.app.state.settings,
-                    job.id,
-                )
-                video_jobs.append(video_job_payload(job))
-                notices.append("视频生成任务已提交，可在对话中查看进度。")
-            elif tool_call.get("name") == "generate_music":
-                lyrics = str(arguments.get("lyrics", "")).strip() or None
-                job = await create_music_job(
-                    request.app.state.runtime,
-                    user.id,
-                    str(arguments.get("prompt", payload.message)),
-                    lyrics,
-                    bool(arguments.get("is_instrumental", True)),
-                )
-                background_tasks.add_task(
-                    run_music_job,
-                    request.app.state.runtime,
-                    request.app.state.settings,
-                    job.id,
-                )
-                music_jobs.append(music_job_payload(job))
-                notices.append("音乐生成任务已提交，可在对话中查看进度。")
-            elif tool_call.get("name") == "generate_speech":
-                voice_id = str(arguments.get("voice_id", "")).strip() or None
-                job = await create_speech_job(
-                    request.app.state.runtime,
-                    user.id,
-                    str(arguments.get("text", payload.message)),
-                    voice_id,
-                    float(arguments.get("speed", 1.0)),
-                    speaker=str(arguments.get("speaker", "")).strip() or None,
-                    voice_role=str(arguments.get("voice_role", "")).strip() or None,
-                    emotion=str(arguments.get("emotion", "calm")),
-                )
-                background_tasks.add_task(
-                    run_speech_job,
-                    request.app.state.runtime,
-                    request.app.state.settings,
-                    job.id,
-                )
-                speech_jobs.append(speech_job_payload(job))
-                notices.append("语音配音任务已提交，可在对话中查看进度。")
-            elif tool_call.get("name") == "start_director_production":
-                full_production = director_full_production_requested(
-                    payload.message,
-                    arguments,
-                )
-                target_seconds = int(arguments.get("target_seconds", 60))
-                if target_seconds not in {30, 60, 180, 300}:
-                    target_seconds = 60
-                aspect_ratio = str(arguments.get("aspect_ratio", "9:16"))
-                if aspect_ratio not in {"9:16", "16:9"}:
-                    aspect_ratio = "9:16"
-                resolution = str(arguments.get("resolution", "768P"))
-                if resolution not in {"768P", "2K"}:
-                    resolution = "768P"
-                project = await create_director_project(
-                    request.app.state.runtime,
-                    request.app.state.settings,
-                    user.id,
-                    premise=str(arguments.get("premise", payload.message)),
-                    target_seconds=target_seconds,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    visual_style=str(arguments.get("visual_style", "电影感写实")),
-                    continuity_notes=str(arguments.get("continuity_notes", "")),
-                    one_click=full_production,
-                    story_confirmed=False,
-                )
-                director_projects.append(
-                    await project_payload(request.app.state.runtime, project)
-                )
-                notices.append(
-                    "导演故事草案已创建，但尚未调用任何视频模型。请到导演工作室核对故事、"
-                    "时长、画幅与风格，确认后总导演会先进行至少两轮文本预演；只有评分达到"
-                    " 90 分才会进入视频生成。"
-                )
+        artifacts, notices = await execute_tools(
+            request.app.state.runtime, request.app.state.settings, user.id,
+            calls, checkpoint,
+        )
+        result.update(artifacts)
         if notices:
             result["content"] = "\n".join(filter(None, [result.get("content", ""), *notices]))
         elif not result.get("content"):
             result["content"] = "模型没有返回文本内容。"
+        result["documents"] = [uploaded_document_payload(record) for record in documents]
         assistant_message = await record_assistant_message(
             request.app.state.runtime,
             user.id,
@@ -458,16 +361,14 @@ async def chat(
             str(result["channel"]),
             str(result["model"]),
             result.get("usage", {}),
-        )
-        background_tasks.add_task(
-            learn_from_exchange,
-            request.app.state.runtime,
-            request.app.state.settings,
-            user.id,
-            prepared.user_message.id,
-            payload.message.strip(),
-            str(result["content"]),
-            payload.model,
+            artifacts={k: v for k, v in result.items() if k != "content"},
+            learning={
+                "user_id": str(user.id),
+                "source_message_id": str(prepared.user_message.id),
+                "user_text": payload.message.strip(),
+                "assistant_text": str(result["content"]),
+                "model_name": payload.model,
+            },
         )
         result["conversation_id"] = str(prepared.conversation.id)
         result["message_id"] = str(assistant_message.id)
@@ -475,11 +376,6 @@ async def chat(
             "items_used": memory_context.memory_count,
             "graph_edges_used": memory_context.graph_edge_count,
         }
-        result["files"] = files
-        result["video_jobs"] = video_jobs
-        result["music_jobs"] = music_jobs
-        result["speech_jobs"] = speech_jobs
-        result["director_projects"] = director_projects
         result["documents"] = [uploaded_document_payload(record) for record in documents]
         result["skills_used"] = ["document-understanding"] if documents else []
         result["mcp_calls"] = mcp_calls
@@ -507,3 +403,15 @@ async def chat(
             status_code=502,
             detail=f"大模型渠道返回错误（HTTP {exc.status_code}）",
         ) from exc
+
+
+@router.post("")
+async def chat(
+    payload: ChatPayload, request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    return await run_chat_request(
+        request.app.state.runtime, user.id,
+        request.headers.get("Idempotency-Key"), payload.model_dump(mode="json"),
+        lambda run: _execute_chat(payload, request, user, run),
+    )

@@ -1,3 +1,20 @@
+.creative-context-panel { margin: 18px 0; padding: 22px; background: #fff; border: 1px solid #e5e3f2; border-radius: 18px; overflow-wrap: anywhere; }
+.studio-area .creative-context-panel { background: #1c1d29; border-color: #333444; color: #f2f1fa; }
+.studio-area .creative-context-panel h2, .studio-area .creative-context-panel strong { color: #f2f1fa; }
+.studio-area .creative-context-panel p, .studio-area .creative-context-panel li { color: #bfc0d2; }
+.studio-area .storyboard-review-shot { border-color: #38394a; }
+.production-details { margin-top: 20px; }
+.production-details > summary { cursor: pointer; padding: 16px 0; color: #bfc0d2; }
+#project-output video { width: 100%; max-height: 520px; background: #000; border-radius: 12px; }
+#project-output a { display: inline-block; margin: 12px 0; color: #cebcff; }
+.creative-context-panel h2 { margin: 0 0 12px; font-size: 18px; }
+.creative-context-panel p, .creative-context-panel li { line-height: 1.7; color: #51586c; white-space: pre-wrap; }
+.creative-context-panel button { margin: 8px 8px 0 0; }
+.storyboard-review-shot { padding: 14px 0; border-top: 1px solid #eeeaf5; }
+#storyboard-review-content { max-height: 500px; overflow: auto; margin-bottom: 16px; }
+#creative-preferences-form, #creative-feedback-form { display: grid; gap: 14px; }
+#creative-preferences-form textarea, #creative-feedback-form textarea { min-height: 80px; }
+.mode-nav-item[data-workspace="studio"] { order: -1; }
 :root {
   --ink: #172033;
   --muted: #7a8499;
@@ -162,7 +179,7 @@ button { cursor: pointer; }
 .director-start-modal { width: min(760px, calc(100% - 30px)); max-height: calc(100dvh - 32px); overflow-y: auto; color: #2e374b; }
 .director-start-intro { margin: 8px 0 20px; color: #717b90; line-height: 1.7; }
 .director-start-modal form > label, .director-form-grid label { display: grid; gap: 7px; color: #515d73; font-size: 12px; font-weight: 700; }
-.director-start-modal textarea, .director-start-modal select { width: 100%; border: 1px solid #dfe3ed; border-radius: 12px; outline: 0; padding: 12px 13px; color: #293349; background: #f9fafe; }
+.director-start-modal textarea, .director-start-modal select, .director-start-modal input:not([type="checkbox"]) { width: 100%; border: 1px solid #dfe3ed; border-radius: 12px; outline: 0; padding: 12px 13px; color: #293349; background: #f9fafe; }
 .director-start-modal textarea { resize: vertical; line-height: 1.7; }
 .director-start-modal .continuity-input { margin-top: 14px; }
 .continuity-input small { color: #8891a3; font-size: 10px; font-weight: 500; line-height: 1.6; }

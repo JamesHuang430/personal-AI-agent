@@ -6,8 +6,9 @@ from uuid import UUID
 
 from sqlalchemy import desc, select
 
-from assistant_app.db.models import Conversation, ConversationMessage
+from assistant_app.db.models import ChatRun, Conversation, ConversationMessage
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.work_queue import enqueue
 
 
 class ConversationNotFoundError(LookupError):
@@ -32,6 +33,7 @@ async def prepare_conversation(
     conversation_id: UUID | None,
     message: str,
     model_name: str,
+    artifacts: dict[str, object] | None = None,
 ) -> PreparedConversation:
     now = datetime.now(UTC)
     async with runtime.sessions() as session, session.begin():
@@ -76,6 +78,7 @@ async def prepare_conversation(
             role="user",
             content=message,
             model_name=model_name,
+            artifacts=artifacts or {},
         )
         session.add(user_message)
         conversation.last_message_at = now
@@ -97,6 +100,8 @@ async def record_assistant_message(
     channel_name: str,
     model_name: str,
     usage: dict[str, int | None],
+    artifacts: dict[str, object] | None = None,
+    learning: dict[str, object] | None = None,
 ) -> ConversationMessage:
     now = datetime.now(UTC)
     async with runtime.sessions() as session, session.begin():
@@ -113,6 +118,7 @@ async def record_assistant_message(
             user_id=user_id,
             role="assistant",
             content=content,
+            artifacts=artifacts or {},
             channel_name=channel_name,
             model_name=model_name,
             prompt_tokens=usage.get("prompt_tokens"),
@@ -123,6 +129,8 @@ async def record_assistant_message(
         conversation.last_message_at = now
         conversation.updated_at = now
         await session.flush()
+        if learning:
+            await enqueue(session, "memory", record.id, learning)
     return record
 
 
@@ -142,6 +150,7 @@ def message_payload(item: ConversationMessage) -> dict[str, object]:
         "conversation_id": str(item.conversation_id),
         "role": item.role,
         "content": item.content,
+        "artifacts": item.artifacts or {},
         "channel": item.channel_name,
         "model": item.model_name,
         "usage": {
@@ -194,9 +203,15 @@ async def get_conversation_messages(
                 .order_by(ConversationMessage.created_at)
             )
         ).all()
+        runs = (await session.scalars(select(ChatRun).where(
+            ChatRun.conversation_id == conversation_id, ChatRun.user_id == user_id,
+            ChatRun.status != "completed",
+        ))).all()
     return {
         "conversation": conversation_payload(conversation),
         "messages": [message_payload(item) for item in messages],
+        "runs": [{"id": str(run.id), "status": run.status, "error": run.error,
+                  "artifacts": run.response or {}} for run in runs],
     }
 
 

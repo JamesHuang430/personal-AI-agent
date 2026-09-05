@@ -136,13 +136,16 @@ test("executes web search through the authenticated Python tool bridge", async (
   context.after(() => upstream.server.close());
 
   let bridgeRequest;
+  let permits = 0;
   const bridge = await listen(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
-    bridgeRequest = {
+    const received = {
       secret: request.headers["x-pi-runtime-secret"],
       body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
     };
+    if (received.body.name === "model_request_permit") permits += 1;
+    else bridgeRequest = received;
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       is_error: false,
@@ -163,6 +166,7 @@ test("executes web search through the authenticated Python tool bridge", async (
   const secret = "s".repeat(32);
   const result = await runAgent({
     run_id: "run-search",
+    require_model_permit: true,
     model: "test-model",
     base_url: upstream.url,
     api_key: "test-key",
@@ -187,6 +191,7 @@ test("executes web search through the authenticated Python tool bridge", async (
 
   assert.equal(result.content, "根据来源，Pi 可用。");
   assert.equal(result.turns, 2);
+  assert.equal(permits, 2);
   assert.equal(result.web_sources[0].url, "https://example.com/pi");
   assert.equal(bridgeRequest.secret, secret);
   assert.equal(bridgeRequest.body.name, "web_search");

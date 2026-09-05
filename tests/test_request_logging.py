@@ -5,7 +5,7 @@ from assistant_app.core.config import Settings
 from assistant_app.services.request_logging import REDACTED, decode_http_body, redact_api_keys
 
 
-def test_only_api_key_fields_and_values_are_redacted() -> None:
+def test_credentials_are_redacted() -> None:
     result = redact_api_keys(
         {
             "message": "请保留完整输入",
@@ -19,7 +19,7 @@ def test_only_api_key_fields_and_values_are_redacted() -> None:
     )
 
     assert result["message"] == "请保留完整输入"
-    assert result["password"] == "visible-by-requirement"
+    assert result["password"] == REDACTED
     assert result["api_key"] == REDACTED
     assert result["nested"]["Authorization"] == REDACTED
     assert result["nested"]["output"] == f"模型意外输出 {REDACTED}"

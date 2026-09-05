@@ -17,7 +17,6 @@ from assistant_app.services.model_gateway import (
     AGENT_TOOLS,
     WEB_TOOL_NAMES,
     ModelChannelUnavailableError,
-    _enforce_qps,
 )
 from assistant_app.services.request_logging import record_request_log
 
@@ -55,9 +54,9 @@ async def pi_chat_completion(
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
         raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
-    await _enforce_qps(runtime, channel)
 
     run_id = str(uuid4())
+    await runtime.redis.set(f"pi-runtime:channel:{run_id}", str(channel.id), ex=900)
     system_parts = [AGENT_SYSTEM_PROMPT]
     if memory_context:
         system_parts.append(memory_context)
@@ -78,6 +77,7 @@ async def pi_chat_completion(
         "history": history[-20:],
         "tools": tools,
         "max_turns": 8,
+        "require_model_permit": True,
     }
     started = time.perf_counter()
     request_id = current_request_id() or str(uuid4())

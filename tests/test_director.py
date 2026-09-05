@@ -14,9 +14,7 @@ from assistant_app.db.models import DirectorAgentRun, DirectorProject
 from assistant_app.services.agent_model_router import AGENT_MODEL_PROFILES
 from assistant_app.services.director import (
     DIRECTOR_PREFLIGHT_MIN_SCORE,
-    DIRECTOR_SUBTITLE_FONT_SIZE,
     DirectorProjectNotResumableError,
-    _dialogue_voice_filter,
     _dialogue_window,
     _director_video_size,
     _execute_agent_run,
@@ -26,10 +24,14 @@ from assistant_app.services.director import (
     _shot_durations,
     _shot_prompt,
     _split_agent_output,
-    _srt_timestamp,
     _validate_director_preflight,
     _validate_visual_data,
     create_director_project,
+)
+from assistant_app.services.director_media import (
+    DIRECTOR_SUBTITLE_FONT_SIZE,
+    _dialogue_voice_filter,
+    _srt_timestamp,
 )
 
 
@@ -132,6 +134,7 @@ def test_director_output_separates_visible_summary_and_deliverable() -> None:
 
 
 def test_one_click_movie_plans_supported_clip_lengths() -> None:
+    assert _shot_durations(4) == ["4"]
     assert _shot_durations(30) == ["12", "12", "8"]
     assert _shot_durations(60) == ["12", "12", "12", "12", "12"]
     assert sum(map(int, _shot_durations(300))) == 300
@@ -145,6 +148,9 @@ async def test_director_project_is_flushed_before_agent_runs(
         return "test", ["qwen3.7-max"]
 
     monkeypatch.setattr("assistant_app.services.director.list_available_models", available_models)
+    async def personalization(*args, **kwargs):
+        return {"preferences": {}, "memories": []}
+    monkeypatch.setattr("assistant_app.services.director.build_personalization", personalization)
     session = RecordingDirectorSession()
     runtime = SimpleNamespace(sessions=lambda: session)
 

@@ -14,6 +14,7 @@ from assistant_app.core.encryption import decrypt_secret
 from assistant_app.db.models import SpeechChannel, SpeechJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.generated_files import GENERATED_ROOT
+from assistant_app.services.work_queue import enqueue
 
 
 class SpeechChannelUnavailableError(RuntimeError):
@@ -119,6 +120,7 @@ async def create_speech_job(
     speaker: str | None = None,
     voice_role: str | None = None,
     emotion: str = "calm",
+    schedule: bool = True,
 ) -> SpeechJob:
     async with runtime.sessions() as session:
         channel = await session.scalar(
@@ -144,6 +146,9 @@ async def create_speech_job(
     )
     async with runtime.sessions() as session, session.begin():
         session.add(job)
+        if schedule:
+            await session.flush()
+            await enqueue(session, "speech", job.id)
     return job
 
 
@@ -243,9 +248,7 @@ async def _request_speech(
         message = str(base_resp.get("status_msg", "unknown"))[:240]
         if "insufficient balance" in message.casefold():
             raise SpeechProviderError(SPEECH_BALANCE_MESSAGE)
-        raise SpeechProviderError(
-            f"MiniMax 语音接口返回 HTTP {response.status_code}：{message}"
-        )
+        raise SpeechProviderError(f"MiniMax 语音接口返回 HTTP {response.status_code}：{message}")
     return result
 
 
@@ -360,16 +363,24 @@ async def _run_edge_speech(
 async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_id: UUID) -> None:
     async with runtime.sessions() as session:
         job = await session.get(SpeechJob, job_id)
-        if job is None:
+        if job is None or job.status in {"completed", "awaiting_confirmation"}:
             return
         channel = await session.get(SpeechChannel, job.channel_id)
     if channel is None:
         await _fail_job(runtime, job_id, "语音渠道已不存在")
         return
 
+    if job.submission_started_at:
+        await _fail_job(
+            runtime, job_id, "上次提交结果不确定，为避免重复计费已停止自动重试，请核对供应商记录"
+        )
+        return
+
     try:
         await _enforce_speech_qps(runtime, channel)
-        await _update_job(runtime, job_id, status="processing")
+        await _update_job(
+            runtime, job_id, status="processing", submission_started_at=datetime.now(UTC)
+        )
         edge_voice = _edge_voice_name(job.voice_id)
         if edge_voice:
             await _run_edge_speech(runtime, job, edge_voice)
@@ -383,9 +394,7 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
                 await _available_voice_ids(client, channel, headers) if job.voice_role else set()
             )
             selected_voice_id = (
-                _select_role_voice(
-                    job.voice_role, job.speaker, available, channel.default_voice_id
-                )
+                _select_role_voice(job.voice_role, job.speaker, available, channel.default_voice_id)
                 if job.voice_role
                 else job.voice_id
             )

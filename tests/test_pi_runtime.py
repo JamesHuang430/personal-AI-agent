@@ -204,11 +204,10 @@ async def test_pi_runtime_adapter_preserves_existing_response_contract(
 
     monkeypatch.setattr(pi_runtime.httpx, "AsyncClient", Client)
     monkeypatch.setattr(pi_runtime, "decrypt_secret", lambda *_args: "api-key")
-    monkeypatch.setattr(pi_runtime, "_enforce_qps", noop)
     monkeypatch.setattr(pi_runtime, "record_request_log", noop)
 
     result = await pi_runtime.pi_chat_completion(
-        SimpleNamespace(sessions=Session),
+        SimpleNamespace(sessions=Session, redis=SimpleNamespace(set=noop)),
         Settings(
             _env_file=None,
             agent_runtime="pi",

@@ -1,16 +1,18 @@
-# Personal AI Assistant
+# 知伴 · 懂你的 AI 视频工作室
 
-个人 AI 助理的自托管应用。当前版本包含用户端、运营后台、账号积分体系、文件生成、视频任务和可切换的 OpenAI 兼容模型渠道，使用 FastAPI、PostgreSQL/pgvector、Redis、Nginx 与 Docker Compose 部署。
+核心目标：在更了解用户创作喜好的前提下，让用户更方便地生成符合期待的视频。
+产品主线是 **创意 → 故事 → 分镜 → 视频与声音 → 字幕 → 合片 → 质检与用户验收**。
+聊天用于澄清创作意图、沉淀创作偏好和讨论修改意见；工作室是默认入口。
 
-完整设计见 [docs/personal-ai-assistant-design.md](docs/personal-ai-assistant-design.md)。
+当前定位、取舍与验收标准见 [视频创作产品方案](docs/video-product-focus.md)。
+原个人助理设计已归档，不再作为本期范围。
 
-## 当前能力
+## 支撑能力
 
 - 邮箱验证码注册与登录，全站每天最多注册 3 个用户；
 - 用户端和运营后台登录均有一次性计算验证码，支持邮件重置密码；
-- 每位用户每天签到一次并获得 100 积分；
-- 用户工作台、积分套餐展示和大模型对话界面；
-- 独立运营后台：用户启停、积分调整、套餐管理；
+- 视频工作室、创意对话与作品验收界面；
+- 独立运营后台：用户启停、渠道管理与请求日志；
 - 大模型渠道管理：单一当前渠道的 Base URL、加密 API Key 与全局 QPS；
 - 用户在对话前端选择模型；优先读取渠道的 OpenAI 兼容模型目录，也可直接输入模型 ID；
 - 视频生成渠道管理：Base URL、加密 API Key、模型名、渠道切换与全局 QPS；
@@ -31,7 +33,21 @@
 - PostgreSQL 16 + pgvector + Apache AGE、Redis 和可选 MinIO 的 Compose 服务；
 - Alembic 迁移骨架和基础测试。
 
-真实天气/票务 Provider 和支付将在后续阶段实现。当前界面不会伪装成已经具备这些业务能力。
+本期不再规划天气、票务、通用生活助理、积分商城或支付。
+上述历史基础能力中，账号、渠道、文件、检索与记忆继续服务视频制作；
+签到和套餐已从用户产品界面移除，历史数据与兼容接口保留。
+
+视频创作的新能力：
+
+- 可编辑的视觉风格、受众、叙事、节奏、声音与避讳偏好。
+- 导演规划检索相关创作记忆；向量检索失败时回退到近期创作偏好。
+- 每个项目保存偏好与记忆快照，故事、视觉、导演预演共用，本次要求优先。
+- 未启动草案可编辑；新项目在文本规划完成后等待用户确认具体分镜，再生成视频。
+- 技术质检与用户验收分开；明确勾选的作品反馈可成为今后的创作记忆。
+- 支持 4 秒试片，以一个镜头验证声音、字幕、合片和质检流程。
+- 仅将明确的长期创作偏好写入记忆；不将虚构剧情推断为用户经历。
+
+尚未提供精细的逐镜版本编辑、自动内容审片或价格预算承诺，具体边界见产品方案。
 
 ## Docker 快速启动
 
@@ -48,11 +64,16 @@
    ASSISTANT_LOG_JSON=true
    ```
 
-3. 启动基础服务：
+3. 构建镜像、迁移数据库并启动服务：
 
    ```powershell
-   docker compose up -d --build
+   docker compose build
+   docker compose up -d --wait postgres redis
+   docker compose run --rm --no-deps assistant-api alembic upgrade head
+   docker compose up -d
    ```
+
+   已有环境升级前请先阅读 [执行可靠性与升级](docs/execution-reliability.md)，停止旧版任务入口再切换。
 
 4. 验证服务：
 
@@ -93,6 +114,10 @@ SearXNG 实例。网页读取限制响应大小和超时，并拒绝本机、内
 [docs/pi-runtime-poc.md](docs/pi-runtime-poc.md)。
 
 ## 本地 Python 开发
+
+媒体任务现在由独立 worker 执行；升级与恢复语义见
+[执行可靠性与升级](docs/execution-reliability.md)。本地运行 API 后还需启动
+`python -m assistant_app.worker`。发布前必须执行 `alembic upgrade head`。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt

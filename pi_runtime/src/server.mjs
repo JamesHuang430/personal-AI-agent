@@ -54,6 +54,7 @@ const server = createServer(async (request, response) => {
         return json(response, 422, { error: `Missing field: ${name}` });
       }
     }
+    input.require_model_permit = true;
     const result = await runAgent(input, { bridgeUrl, sharedSecret });
     return json(response, 200, result);
   } catch (error) {

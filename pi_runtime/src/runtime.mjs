@@ -196,7 +196,17 @@ export async function runAgent(input, config) {
     streamFn: (selectedModel, context, options) => streamSimple(
       selectedModel,
       context,
-      { ...options, apiKey: input.api_key, sessionId: input.run_id },
+      {
+        ...options, apiKey: input.api_key, sessionId: input.run_id, maxRetries: 0,
+        fetch: async (url, init) => {
+          if (input.require_model_permit) {
+            await callToolBridge({
+              ...runtime, name: "model_request_permit", arguments: {}, signal: init?.signal,
+            });
+          }
+          return fetch(url, init);
+        },
+      },
     ),
     toolExecution: "parallel",
     shouldStopAfterTurn: () => {

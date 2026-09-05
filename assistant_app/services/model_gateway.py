@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from openai import AsyncOpenAI
 from sqlalchemy import select
 
@@ -86,7 +88,7 @@ AGENT_TOOLS = [
                     "premise": {"type": "string", "description": "故事创意、人物与核心冲突"},
                     "target_seconds": {
                         "type": "integer",
-                        "enum": [30, 60, 180, 300],
+                        "enum": [4, 30, 60, 180, 300],
                         "description": "目标总时长，默认 60 秒",
                     },
                     "aspect_ratio": {
@@ -101,7 +103,7 @@ AGENT_TOOLS = [
                     },
                     "visual_style": {
                         "type": "string",
-                        "description": "视觉风格，默认电影感写实",
+                        "description": "仅在用户本次明确指定风格时填写；否则留空以使用用户创作偏好",
                     },
                     "continuity_notes": {
                         "type": "string",
@@ -149,7 +151,7 @@ AGENT_TOOLS = [
         "function": {
             "name": "generate_video",
             "description": (
-                "仅当用户明确说提示词或方案已确认并要求立即生成时，提交异步视频任务。"
+                "创建等待用户通过确认按钮批准的视频草稿，不直接调用视频模型。"
                 "首次提出视频创意但尚未确认提示词时，只准备提示词，不得视为已确认。"
             ),
             "parameters": {
@@ -252,7 +254,11 @@ AGENT_TOOLS = [
 WEB_TOOL_NAMES = {"web_search", "fetch_webpage"}
 
 AGENT_SYSTEM_PROMPT = (
-    "你是一个可靠、友善的私人 AI 助理。使用简体中文回答，"
+    "你是知伴的视频创作搭档。使用简体中文回答，帮助用户从创意、故事、分镜到视频成片。"
+    "对话主要用于澄清创作意图、受众、风格、节奏、声音偏好和修改意见。"
+    "本次要求优先于历史偏好；不要把虚构角色、剧情和助手建议当作用户个人事实。"
+    "用户需要完整短剧时优先创建导演项目；普通讨论不自动生成媒体。"
+    "不知道的信息要明确说明，"
     "不知道的信息要明确说明，不要虚构机票、火车票或实时数据。涉及最新、"
     "当前、今天、近期、新闻、价格、政策、人物职务、产品版本，或用户明确要求"
     "搜索/联网/查网页时，必须先调用 web_search；搜索摘要不足时再调用"
@@ -335,14 +341,39 @@ def _tool_arguments(raw: str) -> dict[str, Any]:
 
 
 async def _enforce_qps(runtime: RuntimeDependencies, channel: ModelChannel) -> None:
-    window = int(time.time())
-    key = f"model:qps:{channel.id}:{window}"
-    async with runtime.redis.pipeline(transaction=True) as pipe:
-        pipe.incr(key)
-        pipe.expire(key, 2)
-        count, _ = await pipe.execute()
-    if count > channel.qps_limit:
-        raise ModelRateLimitError("当前模型请求较多，请稍后重试")
+    # Redis time + sliding window: all API/worker/Pi processes share one budget.
+    script = """
+    local t = redis.call('TIME')
+    local now = tonumber(t[1]) * 1000 + tonumber(t[2]) / 1000
+    redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - 1000)
+    if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[1]) then
+        redis.call('ZADD', KEYS[1], now, ARGV[2])
+        redis.call('PEXPIRE', KEYS[1], 2000)
+        return 0
+    end
+    local first = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+    return math.ceil(tonumber(first[2]) + 1000 - now)
+    """
+    deadline = time.monotonic() + 10
+    while True:
+        delay = await runtime.redis.eval(
+            script, 1, f"model:requests:{channel.id}", channel.qps_limit, str(uuid4()),
+        )
+        if not delay:
+            return
+        if time.monotonic() >= deadline:
+            raise ModelRateLimitError("当前模型请求较多，请稍后重试")
+        await asyncio.sleep(max(0.001, min(float(delay) / 1000, 1)))
+
+
+def model_client(runtime, channel, api_key: str, timeout: float) -> AsyncOpenAI:
+    async def before_request(_request):
+        await _enforce_qps(runtime, channel)
+
+    return AsyncOpenAI(
+        api_key=api_key, base_url=channel.base_url, timeout=timeout, max_retries=0,
+        http_client=httpx.AsyncClient(event_hooks={"request": [before_request]}),
+    )
 
 
 async def list_available_models(
@@ -357,7 +388,7 @@ async def list_available_models(
         raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
 
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
-    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=20) as client:
+    async with model_client(runtime, channel, api_key, 20) as client:
         page = await client.models.list()
     model_names = sorted(
         {
@@ -382,7 +413,6 @@ async def chat_completion(
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
         raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
-    await _enforce_qps(runtime, channel)
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
     messages = [
         {
@@ -407,7 +437,7 @@ async def chat_completion(
     usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     content = ""
 
-    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=60) as client:
+    async with model_client(runtime, channel, api_key, 60) as client:
         for round_index in range(4):
             completion = await logged_model_completion(
                 runtime,
@@ -555,9 +585,8 @@ async def agent_text_completion(
         channel = await session.scalar(select(ModelChannel).where(ModelChannel.is_active.is_(True)))
     if channel is None:
         raise ModelChannelUnavailableError("运营后台尚未启用文本模型渠道")
-    await _enforce_qps(runtime, channel)
     api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
-    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=120) as client:
+    async with model_client(runtime, channel, api_key, 120) as client:
         completion = await logged_model_completion(
             runtime,
             client,

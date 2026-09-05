@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -15,6 +17,7 @@ from assistant_app.core.encryption import decrypt_secret
 from assistant_app.db.models import VideoChannel, VideoJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.generated_files import GENERATED_ROOT
+from assistant_app.services.work_queue import enqueue
 
 VIDEO_SECONDS = {"4", "8", "12"}
 VIDEO_SIZES = {"720x1280", "1280x720", "1024x1792", "1792x1024"}
@@ -50,6 +53,9 @@ async def create_video_job(
     seconds: str | None = None,
     size: str | None = None,
     resolution: str | None = None,
+    *,
+    schedule: bool = True,
+    awaiting_confirmation: bool = False,
 ) -> VideoJob:
     async with runtime.sessions() as session:
         channel = await session.scalar(select(VideoChannel).where(VideoChannel.is_active.is_(True)))
@@ -66,24 +72,33 @@ async def create_video_job(
         user_id=user_id,
         channel_id=channel.id,
         prompt=prompt[:8000],
-        status="queued",
+        status="awaiting_confirmation" if awaiting_confirmation else "queued",
         seconds=selected_seconds,
         size=selected_size,
         resolution=selected_resolution,
     )
     async with runtime.sessions() as session, session.begin():
         session.add(job)
+        if schedule and not awaiting_confirmation:
+            await session.flush()
+            await enqueue(session, "video", job.id)
     return job
 
 
 async def run_video_job(runtime: RuntimeDependencies, settings: Settings, job_id: UUID) -> None:
     async with runtime.sessions() as session:
         job = await session.get(VideoJob, job_id)
-        if job is None:
+        if job is None or job.status in {"completed", "awaiting_confirmation"}:
             return
         channel = await session.get(VideoChannel, job.channel_id)
     if channel is None:
         await _fail_job(runtime, job_id, "视频渠道已不存在")
+        return
+
+    if job.submission_started_at and not job.provider_job_id:
+        await _fail_job(
+            runtime, job_id, "上次提交结果不确定，为避免重复计费已停止自动重试，请核对供应商记录"
+        )
         return
 
     try:
@@ -117,19 +132,25 @@ async def _run_openai_video(
     runtime: RuntimeDependencies,
     job_id: UUID,
 ) -> bytes:
-    async with AsyncOpenAI(api_key=api_key, base_url=channel.base_url, timeout=900) as client:
-        provider_job = await client.videos.create(
-            prompt=job.prompt,
-            model=channel.model_name,
-            seconds=job.seconds,
-            size=job.size,
-        )
-        await _update_job(runtime, job_id, provider_job_id=provider_job.id)
-        completed = await client.videos.poll(provider_job.id, poll_interval_ms=5000)
+    async with AsyncOpenAI(
+        api_key=api_key, base_url=channel.base_url, timeout=900, max_retries=0
+    ) as client:
+        task_id = job.provider_job_id
+        if not task_id:
+            await _update_job(runtime, job_id, submission_started_at=datetime.now(UTC))
+            provider_job = await client.videos.create(
+                prompt=job.prompt,
+                model=channel.model_name,
+                seconds=job.seconds,
+                size=job.size,
+            )
+            task_id = provider_job.id
+            await _update_job(runtime, job_id, provider_job_id=task_id)
+        completed = await client.videos.poll(task_id, poll_interval_ms=5000)
         if getattr(completed, "status", None) not in {"completed", "succeeded"}:
             detail = getattr(completed, "error", None)
             raise VideoProviderError(f"渠道任务失败：{detail or completed.status}")
-        response = await client.videos.download_content(provider_job.id)
+        response = await client.videos.download_content(task_id)
         return await response.aread()
 
 
@@ -173,24 +194,29 @@ async def _run_minimax_video(
     }
     timeout = httpx.Timeout(900.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.post(
-            create_url,
-            headers=headers,
-            json=payload,
-        )
-        if response.status_code != 200:
-            try:
-                provider_message = str(response.json().get("base_resp", {}).get("status_msg", ""))
-            except (ValueError, AttributeError):
-                provider_message = ""
-            suffix = f"（{provider_message[:180]}）" if provider_message else ""
-            raise VideoProviderError(
-                f"MiniMax 创建任务返回 HTTP {response.status_code}{suffix}"
-            )
-        task_id = str(response.json().get("task_id", "")).strip()
+        task_id = job.provider_job_id
         if not task_id:
-            raise VideoProviderError("MiniMax 未返回 task_id")
-        await _update_job(runtime, job_id, provider_job_id=task_id)
+            await _update_job(runtime, job_id, submission_started_at=datetime.now(UTC))
+            response = await client.post(
+                create_url,
+                headers=headers,
+                json=payload,
+            )
+            if response.status_code != 200:
+                try:
+                    provider_message = str(
+                        response.json().get("base_resp", {}).get("status_msg", "")
+                    )
+                except (ValueError, AttributeError):
+                    provider_message = ""
+                suffix = f"（{provider_message[:180]}）" if provider_message else ""
+                raise VideoProviderError(
+                    f"MiniMax 创建任务返回 HTTP {response.status_code}{suffix}"
+                )
+            task_id = str(response.json().get("task_id", "")).strip()
+            if not task_id:
+                raise VideoProviderError("MiniMax 未返回 task_id")
+            await _update_job(runtime, job_id, provider_job_id=task_id)
         _, query_url = _minimax_video_urls(channel.base_url, task_id)
 
         deadline = time.monotonic() + 900
@@ -210,9 +236,7 @@ async def _run_minimax_video(
                     raise VideoProviderError("MiniMax 任务完成但未返回视频地址")
                 download = await client.get(video_url)
                 if download.status_code != 200:
-                    raise VideoProviderError(
-                        f"MiniMax 视频下载返回 HTTP {download.status_code}"
-                    )
+                    raise VideoProviderError(f"MiniMax 视频下载返回 HTTP {download.status_code}")
                 return download.content
             if task_status in {"failed", "cancelled"}:
                 raise VideoProviderError(f"MiniMax 任务状态为 {task_status}")
@@ -233,11 +257,17 @@ async def _fail_job(runtime: RuntimeDependencies, job_id: UUID, message: str) ->
     await _update_job(runtime, job_id, status="failed", error_message=message)
 
 
+def video_draft_hash(job: VideoJob) -> str:
+    data = [str(job.id), str(job.channel_id), job.prompt, job.seconds, job.size, job.resolution]
+    return hashlib.sha256(json.dumps(data, ensure_ascii=False).encode()).hexdigest()
+
+
 def video_job_payload(job: VideoJob) -> dict[str, object]:
     return {
         "id": str(job.id),
         "prompt": job.prompt,
         "status": job.status,
+        "draft_hash": video_draft_hash(job),
         "seconds": job.seconds,
         "size": job.size,
         "resolution": job.resolution or "768P",
@@ -246,7 +276,5 @@ def video_job_payload(job: VideoJob) -> dict[str, object]:
         "download_url": (
             f"/api/v1/videos/{job.id}/download" if job.status == "completed" else None
         ),
-        "preview_url": (
-            f"/api/v1/videos/{job.id}/preview" if job.status == "completed" else None
-        ),
+        "preview_url": (f"/api/v1/videos/{job.id}/preview" if job.status == "completed" else None),
     }

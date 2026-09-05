@@ -13,6 +13,7 @@ from assistant_app.core.encryption import decrypt_secret
 from assistant_app.db.models import MusicChannel, MusicJob
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.generated_files import GENERATED_ROOT
+from assistant_app.services.work_queue import enqueue
 
 
 class MusicChannelUnavailableError(RuntimeError):
@@ -43,6 +44,8 @@ async def create_music_job(
     prompt: str,
     lyrics: str | None = None,
     is_instrumental: bool = True,
+    *,
+    schedule: bool = True,
 ) -> MusicJob:
     async with runtime.sessions() as session:
         channel = await session.scalar(select(MusicChannel).where(MusicChannel.is_active.is_(True)))
@@ -61,22 +64,33 @@ async def create_music_job(
     )
     async with runtime.sessions() as session, session.begin():
         session.add(job)
+        if schedule:
+            await session.flush()
+            await enqueue(session, "music", job.id)
     return job
 
 
 async def run_music_job(runtime: RuntimeDependencies, settings: Settings, job_id: UUID) -> None:
     async with runtime.sessions() as session:
         job = await session.get(MusicJob, job_id)
-        if job is None:
+        if job is None or job.status in {"completed", "awaiting_confirmation"}:
             return
         channel = await session.get(MusicChannel, job.channel_id)
     if channel is None:
         await _fail_job(runtime, job_id, "音乐渠道已不存在")
         return
 
+    if job.submission_started_at:
+        await _fail_job(
+            runtime, job_id, "上次提交结果不确定，为避免重复计费已停止自动重试，请核对供应商记录"
+        )
+        return
+
     try:
         await _enforce_music_qps(runtime, channel)
-        await _update_job(runtime, job_id, status="processing")
+        await _update_job(
+            runtime, job_id, status="processing", submission_started_at=datetime.now(UTC)
+        )
         api_key = decrypt_secret(channel.encrypted_api_key, settings.secret_key)
         payload = {
             "model": channel.model_name,
@@ -164,7 +178,5 @@ def music_job_payload(job: MusicJob) -> dict[str, object]:
         "duration_ms": job.duration_ms,
         "error_message": job.error_message if job.status == "failed" else None,
         "created_at": job.created_at.isoformat() if job.created_at else None,
-        "download_url": (
-            f"/api/v1/music/{job.id}/download" if job.status == "completed" else None
-        ),
+        "download_url": (f"/api/v1/music/{job.id}/download" if job.status == "completed" else None),
     }

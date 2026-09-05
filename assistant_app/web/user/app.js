@@ -17,6 +17,8 @@ let activeChatController = null;
 let activeDirectorProject = null;
 let directorProjectTimer = null;
 let directorOneClickMode = false;
+let editingDirectorDraft = null;
+let creativePreferences = {};
 let selectedDirectorStage = null;
 let activeStudioView = window.localStorage.getItem('assistant-studio-view') === 'library' ? 'library' : 'production';
 let videoLibraryFilter = 'all';
@@ -36,7 +38,12 @@ async function api(path, options = {}) {
   });
   if (response.status === 204) return null;
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || `请求失败（${response.status}）`);
+  if (!response.ok) {
+    const error = new Error(body.detail?.message || body.detail || `请求失败（${response.status}）`);
+    error.status = response.status;
+    error.detail = body.detail;
+    throw error;
+  }
   return body;
 }
 
@@ -55,8 +62,8 @@ function setAuthMode(mode) {
   $('#reset-confirm-view').classList.add('hidden');
   $('#login-tab').classList.toggle('active', mode === 'login');
   $('#register-tab').classList.toggle('active', mode === 'register');
-  $('#auth-title').textContent = mode === 'login' ? '登录你的助理' : '创建你的助理';
-  $('#auth-subtitle').textContent = mode === 'login' ? '继续上次的对话和计划' : '每天仅开放 3 个新用户名额';
+  $('#auth-title').textContent = mode === 'login' ? '进入视频工作室' : '创建你的创作账号';
+  $('#auth-subtitle').textContent = mode === 'login' ? '继续你的故事和作品' : '每天仅开放 3 个新用户名额';
   $('#auth-submit').textContent = mode === 'login' ? '进入知伴' : '注册并进入';
   $('#password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
   $('#register-tip').classList.toggle('hidden', mode !== 'register');
@@ -108,6 +115,14 @@ function showApp(user) {
   loadConversations();
   loadVideoGallery();
   loadDirectorProjects();
+  loadCreativePreferences();
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(`assistant-chat-pending:${user.id}`));
+    if (saved?.body && saved?.key) {
+      const message = addMessage('assistant', '上次请求的结果尚未确认，可以重新获取。');
+      addChatRetry(message, saved);
+    }
+  } catch (_) { /* invalid local retry record */ }
 }
 
 async function loadCapabilities() {
@@ -194,11 +209,16 @@ async function openConversation(conversationId) {
       const meta = item.role === 'assistant' && item.model
         ? `${item.channel || '模型渠道'} · ${item.model}`
         : '';
-      addMessage(item.role, item.content, meta);
+      const message = addMessage(item.role, item.content, meta);
+      renderArtifacts(message, item.artifacts || {});
+    }
+    for (const run of result.runs || []) {
+      const message = addMessage('assistant', run.error || '该请求正在处理，请稍后刷新会话');
+      renderArtifacts(message, run.artifacts || {});
     }
     sessionNeedsOrganization = false;
     $('#organize-session').disabled = false;
-    $('#session-memory-status').textContent = '历史会话已载入；可以继续对话，或再次整理到个人知识库';
+    $('#session-memory-status').textContent = '创意会话已载入，可继续讨论或整理创作偏好';
     setSidebarOpen(false);
     await loadConversations();
   } catch (error) {
@@ -278,12 +298,8 @@ async function loadAgentRouting() {
 
 function updateUser(user) {
   currentUser = { ...currentUser, ...user };
-  $('#points-value').textContent = currentUser.points.toLocaleString('zh-CN');
   $('#profile-email').textContent = currentUser.email;
   $('#profile-btn').textContent = currentUser.email.charAt(0).toUpperCase();
-  const checked = Boolean(currentUser.checked_in_today);
-  $('#checkin-btn').disabled = checked;
-  $('#checkin-btn').textContent = checked ? '今日已签到' : '签到 +100';
 }
 
 async function loadSession() {
@@ -438,29 +454,6 @@ $('#logout-btn').addEventListener('click', async () => {
   authView.classList.remove('hidden');
   $('#profile-menu').classList.add('hidden');
 });
-
-$('#checkin-btn').addEventListener('click', async () => {
-  try {
-    const result = await api('/users/check-in', { method: 'POST' });
-    updateUser({ points: result.points, checked_in_today: true });
-    notify(result.already_checked_in ? '今天已经签到过了' : `签到成功，获得 ${result.awarded} 积分`);
-  } catch (error) { notify(error.message); }
-});
-
-async function showPackages() {
-  try {
-    const packages = await api('/packages');
-    $('#package-list').innerHTML = packages.map((item, index) => `
-      <article class="package-card ${index === 1 ? 'featured' : ''}">
-        <h3>${escapeHtml(item.name)}</h3>
-        <div class="package-price">¥${item.price_yuan}<small> / 次</small></div>
-        <p class="package-points">${item.points.toLocaleString('zh-CN')} 积分</p>
-      </article>`).join('') || '<p class="muted">暂无上架套餐</p>';
-    $('#packages-dialog').showModal();
-  } catch (error) { notify(error.message); }
-}
-$('#points-btn').addEventListener('click', showPackages);
-$('.close-btn').addEventListener('click', () => $('#packages-dialog').close());
 
 function renderMemoryGraph(graph) {
   const host = $('#memory-graph');
@@ -675,6 +668,7 @@ function renderArtifacts(message, result) {
 }
 
 function directorStageText(project) {
+  if (project.status === 'awaiting_storyboard') return '等待分镜确认 · 尚未提交视频';
   if (project.status === 'awaiting_confirmation') return '等待你确认故事 · 视频调用 0 次';
   const active = project.agents?.find((run) => run.agent === project.current_stage);
   if (active) return `${active.agent_name} · ${directorAgentStatusLabel(active.status)}`;
@@ -723,14 +717,17 @@ async function pollDirectorArtifact(projectId, card) {
 }
 
 async function pollSpeechJob(jobId, card) {
+  if (!card.isConnected) return;
   try {
     const job = await api(`/speech/${jobId}`);
     const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
     const duration = job.duration_ms ? ` · ${(job.duration_ms / 1000).toFixed(1)} 秒` : '';
     card.querySelector('small').textContent = `${statusText} · ${job.voice_id}${duration}`;
     if (job.status === 'completed') {
-      card.querySelector('a').textContent = '下载语音';
-      card.querySelector('a').href = job.download_url;
+      const download = document.createElement('a');
+      download.textContent = '下载语音';
+      download.href = job.download_url;
+      card.querySelector('a')?.replaceWith(download);
       return;
     }
     if (job.status === 'failed') {
@@ -746,14 +743,17 @@ async function pollSpeechJob(jobId, card) {
 }
 
 async function pollMusicJob(jobId, card) {
+  if (!card.isConnected) return;
   try {
     const job = await api(`/music/${jobId}`);
     const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
     const duration = job.duration_ms ? ` · ${Math.round(job.duration_ms / 1000)} 秒` : '';
     card.querySelector('small').textContent = `${statusText} · ${job.is_instrumental ? '纯配乐' : '带人声歌曲'}${duration}`;
     if (job.status === 'completed') {
-      card.querySelector('a').textContent = '下载音乐';
-      card.querySelector('a').href = job.download_url;
+      const download = document.createElement('a');
+      download.textContent = '下载音乐';
+      download.href = job.download_url;
+      card.querySelector('a')?.replaceWith(download);
       return;
     }
     if (job.status === 'failed') {
@@ -769,13 +769,32 @@ async function pollMusicJob(jobId, card) {
 }
 
 async function pollVideoJob(jobId, card) {
+  if (!card.isConnected) return;
   try {
     const job = await api(`/videos/${jobId}`);
+    if (job.status === 'awaiting_confirmation') {
+      card.replaceChildren();
+      const detail = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = '视频草稿 · 等待确认';
+      const parameters = document.createElement('small');
+      parameters.textContent = `${job.seconds} 秒 · ${job.size} · ${job.resolution}`;
+      const prompt = document.createElement('p');
+      prompt.textContent = job.prompt;
+      detail.append(title, parameters, prompt);
+      card.append(detail, videoConfirmButton(job, () => {
+        card.innerHTML = '<div><strong>视频生成任务</strong><small>排队中</small></div><a href="#">刷新状态</a>';
+        pollVideoJob(jobId, card);
+      }));
+      return;
+    }
     const statusText = { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[job.status] || job.status;
     card.querySelector('small').textContent = `${statusText} · ${job.seconds} 秒 · ${job.size} · ${job.resolution || '768P'}`;
     if (job.status === 'completed') {
-      card.querySelector('a').textContent = '下载视频';
-      card.querySelector('a').href = job.download_url;
+      const download = document.createElement('a');
+      download.textContent = '下载视频';
+      download.href = job.download_url;
+      card.querySelector('a')?.replaceWith(download);
       return;
     }
     if (job.status === 'failed') {
@@ -788,6 +807,25 @@ async function pollVideoJob(jobId, card) {
   } catch (error) {
     card.querySelector('small').textContent = error.message;
   }
+}
+
+function videoConfirmButton(job, onConfirmed) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = '确认以上提示词和参数，开始生成';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await api(`/videos/${job.id}/confirm`, {
+        method: 'POST', body: JSON.stringify({ draft_hash: job.draft_hash }),
+      });
+      onConfirmed();
+    } catch (error) {
+      notify(error.message);
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 async function sendMessage(text) {
@@ -810,6 +848,15 @@ async function sendMessage(text) {
   addMessage('user', content, attachmentMeta);
   conversation.push({ role: 'user', content });
   $('#chat-input').value = '';
+  const requestBody = JSON.stringify({
+    model: selectedModel, message: content, conversation_id: currentConversationId,
+    file_ids: attachmentsForMessage.map((item) => item.id),
+  });
+  const storageKey = `assistant-chat-pending:${currentUser.id}`;
+  let previousRequest = null;
+  try { previousRequest = JSON.parse(sessionStorage.getItem(storageKey)); } catch (_) { /* invalid cache */ }
+  const requestKey = previousRequest?.body === requestBody ? previousRequest.key : crypto.randomUUID();
+  sessionStorage.setItem(storageKey, JSON.stringify({ body: requestBody, key: requestKey }));
   const controller = new AbortController();
   activeChatController = controller;
   setChatGenerating(true);
@@ -818,14 +865,11 @@ async function sendMessage(text) {
   try {
     const result = await api('/chat', {
       method: 'POST',
-      body: JSON.stringify({
-        model: selectedModel,
-        message: content,
-        conversation_id: currentConversationId,
-        file_ids: attachmentsForMessage.map((item) => item.id),
-      }),
+      body: requestBody,
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestKey },
       signal: controller.signal,
     });
+    sessionStorage.removeItem(storageKey);
     pending.remove();
     const webMeta = result.web_sources?.length ? ` · 联网检索 ${result.web_sources.length} 个来源` : '';
     const documentMeta = result.documents?.length ? ` · 文档 Skill/MCP ${result.documents.length} 个附件` : '';
@@ -845,9 +889,13 @@ async function sendMessage(text) {
     const usedRelations = Number(result.memory?.graph_edges_used || 0);
     $('#session-memory-status').textContent = usedMemories || usedRelations
       ? `本轮调用了 ${usedMemories} 条记忆、${usedRelations} 条关系；结束后将归纳新素材`
-      : '本轮内容已记录；结束会话后将自动提炼并同步到双重知识库';
+      : '本轮已记录；结束会话时会整理长期创作偏好';
     loadConversations();
   } catch (error) {
+    if (error.detail?.status === 'failed') {
+      sessionStorage.removeItem(storageKey);
+      if (error.detail.conversation_id) currentConversationId = error.detail.conversation_id;
+    }
     if (error.name === 'AbortError') {
       pending.querySelector('.message-bubble').textContent = '已停止生成。你的提问仍保存在最近对话中，可以稍后重新发送。';
       sessionNeedsOrganization = true;
@@ -856,7 +904,11 @@ async function sendMessage(text) {
       notify('已停止当前回复');
     } else {
       pending.remove();
-      addMessage('assistant', `暂时无法回答：${error.message}`);
+      const failure = addMessage('assistant', `暂时无法回答：${error.message}`);
+      renderArtifacts(failure, error.detail?.artifacts || {});
+      if (error.detail?.status !== 'failed') {
+        addChatRetry(failure, { body: requestBody, key: requestKey });
+      }
     }
   } finally {
     stopChatProgress();
@@ -864,6 +916,33 @@ async function sendMessage(text) {
     setChatGenerating(false);
     $('#chat-input').focus();
   }
+}
+
+function addChatRetry(message, saved) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = '重新获取此请求的结果';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const result = await api('/chat', {
+        method: 'POST', body: saved.body,
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': saved.key },
+      });
+      sessionStorage.removeItem(`assistant-chat-pending:${currentUser.id}`);
+      await openConversation(result.conversation_id);
+    } catch (error) {
+      notify(error.message);
+      if (error.detail?.status === 'failed') {
+        sessionStorage.removeItem(`assistant-chat-pending:${currentUser.id}`);
+        if (error.detail.conversation_id) await openConversation(error.detail.conversation_id);
+        button.remove();
+      } else {
+        button.disabled = false;
+      }
+    }
+  });
+  message.querySelector('.message-bubble').appendChild(button);
 }
 
 function formatFileSize(bytes) {
@@ -963,7 +1042,7 @@ async function organizeCurrentConversation(force = false) {
   const button = $('#organize-session');
   button.disabled = true;
   button.textContent = '正在整理…';
-  $('#session-memory-status').textContent = '正在提炼素材、想法、目标和实体关系，并写入个人知识库…';
+  $('#session-memory-status').textContent = '正在整理长期创作偏好，虚构人物与剧情不会作为个人经历保存…';
   try {
     const result = await api(`/chat/conversations/${currentConversationId}/organize`, {
       method: 'POST',
@@ -996,7 +1075,7 @@ function resetConversationView(reloadHistory = true) {
   renderAttachmentTray();
   $('#messages').innerHTML = initialWelcomeMarkup;
   $('#organize-session').disabled = true;
-  $('#session-memory-status').textContent = '本次会话结束后，将自动提炼素材、想法、目标与关系';
+  $('#session-memory-status').textContent = '聊喜欢的风格、节奏和声音，为下一部作品做准备';
   bindPromptButtons();
   if (reloadHistory) loadConversations();
 }
@@ -1063,9 +1142,8 @@ function switchWorkspace(mode) {
   $('#studio-workspace').classList.toggle('hidden', !isStudio);
   $('#chat-sidebar-context').classList.toggle('hidden', isStudio);
   $('#studio-sidebar-context').classList.toggle('hidden', !isStudio);
-  $('#memory-btn').classList.toggle('hidden', isStudio);
-  $('#workspace-title').textContent = isStudio ? 'AI 导演工作室' : '知识对话';
-  $('#workspace-subtitle').textContent = isStudio ? '一人导演，一组 Agent 把关' : '边问边沉淀你的个人知识库';
+  $('#workspace-title').textContent = isStudio ? '视频工作室' : '创意对话';
+  $('#workspace-subtitle').textContent = isStudio ? '创意 → 故事 → 分镜 → 声画 → 字幕 → 合片 → 验收' : '聊创意与偏好，为下一部作品做准备';
   document.querySelectorAll('[data-workspace]').forEach((button) => {
     button.classList.toggle('active', button.dataset.workspace === mode);
   });
@@ -1078,6 +1156,7 @@ function switchWorkspace(mode) {
 }
 
 function directorStatusLabel(status, oneClick = false) {
+  if (status === 'awaiting_storyboard') return '等待分镜确认';
   return { awaiting_confirmation: '等待故事确认', queued: '准备派单', processing: oneClick ? '完整成片制作中' : '首镜预览制作中', completed: oneClick ? '完整成片完成' : '首镜预览完成', failed: '制作失败' }[status] || status;
 }
 
@@ -1092,7 +1171,7 @@ async function loadDirectorProjects() {
     renderDirectorProjectList(projects);
     if (!projects.length) return;
     if (!activeDirectorProject || !projects.some((item) => item.id === activeDirectorProject.id)) {
-      renderDirectorProject(projects[0]);
+      await loadDirectorProject(projects[0].id);
       loadVideoGallery();
     }
   } catch (error) {
@@ -1138,6 +1217,7 @@ async function loadDirectorProject(projectId) {
 
 function renderDirectorProject(project) {
   activeDirectorProject = project;
+  renderCreativeContext(project);
   $('#production-kicker').innerHTML = `<span class="live-dot"></span> DIRECTOR PROJECT · ${escapeHtml(project.id.slice(0, 8).toUpperCase())}`;
   $('#production-title').textContent = project.title;
   const modeLabel = project.one_click ? '完整成片' : '首镜预览';
@@ -1164,7 +1244,7 @@ function renderDirectorProject(project) {
   $('#director-heading').textContent = project.status === 'awaiting_confirmation'
     ? '请确认故事后再启动 Agent'
     : project.status === 'completed'
-    ? (project.one_click ? '完整成片已生成并通过质检' : '首镜预览已完成，完整成片尚未生成')
+    ? (project.one_click ? '完整成片已生成，技术完整性检查通过；请复核对白与画面' : '首镜预览已完成，完整成片尚未生成')
     : project.status === 'failed'
       ? '导演项目暂停，需要处理失败任务'
       : `${activeRun?.agent_name || '总导演 Agent'}正在处理当前交付物`;
@@ -1176,6 +1256,11 @@ function renderDirectorProject(project) {
       : project.final_summary)
     || directorRun?.decision_summary
     || '总导演编排器正在调度 4 位执行 Agent。页面展示结构化交付和真实工具执行结果。';
+  if (project.status === 'awaiting_storyboard') {
+    $('#director-heading').textContent = '分镜已就绪，请核对后生成视频';
+    $('#director-summary').textContent = '尚未提交视频任务。先核对本片采用的偏好、故事和逐镜对白。';
+  }
+  $('#project-settings').textContent = project.status === 'awaiting_confirmation' ? '编辑草案' : '以此新建一版';
 
   const continueButton = $('#continue-production');
   continueButton.classList.toggle('hidden', !['awaiting_confirmation', 'failed'].includes(project.status));
@@ -1213,15 +1298,139 @@ function renderDirectorProject(project) {
   }
 }
 
+async function loadCreativePreferences() {
+  try { creativePreferences = await api('/director/preferences'); }
+  catch (error) { notify(`创作偏好暂不可用：${error.message}`); }
+}
+
+const preferenceLabels = {visual_style: '视觉', audience: '受众', narrative_tone: '叙事', pacing: '节奏', sound: '声音与字幕', avoid: '避免'};
+
+function renderCreativeContext(project) {
+  const snapshot = project.personalization || {};
+  const explicit = Object.entries(snapshot.preferences || {})
+    .filter(([key, value]) => preferenceLabels[key] && value)
+    .map(([key, value]) => `${preferenceLabels[key]}：${value}`);
+  const memories = (snapshot.memories || []).map(item => item.content);
+  const context = $('#project-personalization');
+  context.replaceChildren();
+  const note = document.createElement('p');
+  note.textContent = '本次创意与制作设定优先；以下是规划时的参考快照。';
+  context.append(note);
+  if (!explicit.length && !memories.length) {
+    const empty = document.createElement('p');
+    empty.textContent = '本片未采用历史偏好，将按本次要求创作。可在“创作偏好”中设置今后的默认风格。';
+    context.append(empty);
+  } else {
+    const list = document.createElement('ul');
+    [...explicit, ...memories.map(value => `创作记忆：${value}`)].forEach(value => {
+      const row = document.createElement('li'); row.textContent = value; list.append(row);
+    });
+    context.append(list);
+  }
+  $('#project-feedback-btn').classList.toggle('hidden', project.status !== 'completed');
+  const output = $('#project-output');
+  const media = project.status === 'completed'
+    ? (project.final_video || project.shots?.find(shot => shot.rendered_video)?.rendered_video)
+    : null;
+  output.replaceChildren();
+  if (media) {
+    const video = document.createElement('video');
+    video.controls = true; video.playsInline = true; video.preload = 'metadata';
+    video.src = media.preview_url;
+    video.setAttribute('aria-label', '本片成品（已制作声音与字幕）');
+    const link = document.createElement('a');
+    link.href = media.download_url; link.textContent = '下载当前成品 MP4';
+    output.append(video, link);
+  }
+  $('#project-feedback-status').textContent = project.feedback?.verdict
+    ? `${project.feedback.verdict === 'accepted' ? '已验收 · 满意' : '待修改'} · 贴合度 ${project.feedback.rating}/5 · ${project.feedback.notes || ''}`
+    : (project.status === 'completed' ? '技术检查通过，等待你观看并验收。' : '');
+  const panel = $('#storyboard-review-panel');
+  panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard');
+  const story = project.agents?.find(item => item.agent === 'story')?.result_data || {};
+  $('#storyboard-review-content').innerHTML = `<p>${escapeHtml(story.script || project.premise)}</p>`
+    + (project.storyboard || []).map((shot, index) => `<article class="storyboard-review-shot">
+      <strong>第 ${index + 1} 镜 · ${escapeHtml(shot.title || '')}</strong>
+      <p>${escapeHtml(shot.positive_prompt || shot.action || '')}</p>
+      <p>对白：${escapeHtml(shot.speech_text || '')}</p>
+      <p>字幕：${escapeHtml(shot.subtitle_text || shot.speech_text || '')}</p>
+    </article>`).join('');
+}
+
+$('#creative-preferences-btn').addEventListener('click', async () => {
+  await loadCreativePreferences();
+  const form = $('#creative-preferences-form');
+  for (const key of Object.keys(preferenceLabels)) form.elements[key].value = creativePreferences[key] || '';
+  form.elements.use_memory.checked = creativePreferences.use_memory !== false;
+  $('#creative-preferences-dialog').showModal();
+});
+document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => {
+  document.getElementById(button.dataset.closeDialog).close();
+}));
+$('#creative-preferences-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]'); button.disabled = true;
+  try {
+    const values = Object.fromEntries(Object.keys(preferenceLabels).map(key => [key, form.elements[key].value.trim()]));
+    values.use_memory = form.elements.use_memory.checked;
+    creativePreferences = await api('/director/preferences', {method: 'PUT', body: JSON.stringify(values)});
+    $('#creative-preferences-dialog').close(); notify('已保存，之后创建的作品会参考这些偏好。');
+  } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+});
+$('#project-feedback-btn').addEventListener('click', () => {
+  if (!activeDirectorProject) return;
+  const form = $('#creative-feedback-form'); form.reset();
+  form.dataset.projectId = activeDirectorProject.id;
+  const saved = activeDirectorProject.feedback || {};
+  for (const key of ['verdict', 'rating', 'notes', 'reusable_preference']) {
+    if (saved[key] !== undefined) form.elements[key].value = saved[key];
+  }
+  form.elements.remember.checked = Boolean(saved.remember);
+  $('#creative-feedback-dialog').showModal();
+});
+$('#creative-feedback-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]'); button.disabled = true;
+  const values = Object.fromEntries(['verdict', 'notes', 'reusable_preference'].map(key => [key, form.elements[key].value.trim()]));
+  values.rating = Number(form.elements.rating.value);
+  values.remember = form.elements.remember.checked;
+  try {
+    const project = await api(`/director/projects/${form.dataset.projectId}/feedback`, {method: 'PUT', body: JSON.stringify(values)});
+    if (activeDirectorProject?.id === project.id) renderDirectorProject(project);
+    $('#creative-feedback-dialog').close();
+    notify(values.remember ? '反馈已保存，明确的创作偏好将用于后续作品。' : '已保存本片反馈。');
+  } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+});
+$('#approve-storyboard-btn').addEventListener('click', async () => {
+  const project = activeDirectorProject;
+  if (project?.status !== 'awaiting_storyboard') return;
+  const button = $('#approve-storyboard-btn'); button.disabled = true;
+  try {
+    const result = await api(`/director/projects/${project.id}/approve-storyboard`, {
+      method: 'POST', body: JSON.stringify({storyboard_hash: project.storyboard_hash}),
+    });
+    if (activeDirectorProject?.id === result.id) renderDirectorProject(result);
+    notify('已确认这版分镜，视频任务即将开始。');
+  } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+});
+$('#revise-storyboard-btn').addEventListener('click', () => showDirectorStart(
+  activeDirectorProject?.one_click || false, activeDirectorProject,
+));
+
 function renderContinuityBible(project) {
   const bible = project.continuity_bible || {};
   const characters = Array.isArray(bible.characters) ? bible.characters : [];
   const relationships = Array.isArray(bible.relationships) ? bible.relationships : [];
   const references = characters.filter((character) => character.reference_image_url).length;
-  const score = characters.length ? Math.min(96, 80 + Math.round((references / characters.length) * 16)) : 0;
+  const score = characters.length ? Math.round((references / characters.length) * 100) : 0;
   $('#continuity-score-value').textContent = characters.length ? String(score) : '—';
   $('#continuity-score-label').textContent = characters.length
-    ? (references === characters.length ? '定妆参考已登记 · 等待兼容模型硬锁' : '文字连续性已锁定 · 定妆参考待补')
+    ? `角色参考图登记率 ${references}/${characters.length} · 不是画面一致性评分`
     : '等待连续性建档';
   $('#continuity-score-bar').style.width = `${score}%`;
   const assets = $('#continuity-assets');
@@ -1261,28 +1470,46 @@ function renderDirectorShots(project) {
     button.addEventListener('click', () => {
       strip.querySelectorAll('.shot-card').forEach((item) => item.classList.remove('selected'));
       button.classList.add('selected');
+      const shot = project.shots.find(item => item.video?.id === button.dataset.videoJob);
+      if (shot?.rendered_video) {
+        const video = document.createElement('video');
+        video.controls = true; video.playsInline = true;
+        video.src = shot.rendered_video.preview_url;
+        const link = document.createElement('a');
+        link.href = shot.rendered_video.download_url; link.textContent = `下载第 ${shot.sequence} 镜成品`;
+        $('#project-output').replaceChildren(video, link);
+        $('#project-output').scrollIntoView({behavior:'smooth', block:'center'});
+      }
     });
   });
 }
 
-function showDirectorStart(oneClick = false) {
+function showDirectorStart(oneClick = false, sourceProject = null, edit = false) {
+  editingDirectorDraft = edit ? sourceProject?.id : null;
+  $('#director-start-form').reset();
   directorOneClickMode = oneClick;
   const title = $('#director-start-dialog h2');
   title.textContent = oneClick ? '一键成片' : '开始制作电影';
   $('#director-start-intro').textContent = oneClick
     ? '总导演编排器将调度 4 位执行 Agent，逐镜生成同步表演、原生声音和定时字幕，并最终合片。'
     : '总导演编排器会生成一个带同步对白、情绪声音和定时字幕的预览镜头。';
-  if (oneClick && activeDirectorProject && !activeDirectorProject.one_click) {
-    $('#director-premise').value = activeDirectorProject.premise || '';
-    $('#director-continuity-notes').value = activeDirectorProject.continuity_notes || '';
-    $('#director-duration').value = String(activeDirectorProject.target_seconds || 60);
-    $('#director-ratio').value = activeDirectorProject.aspect_ratio || '9:16';
-    $('#director-resolution').value = activeDirectorProject.resolution || '768P';
-    const styleOption = [...$('#director-style').options].find(
-      (option) => option.value === activeDirectorProject.visual_style,
-    );
-    if (styleOption) $('#director-style').value = activeDirectorProject.visual_style;
+  $('#director-style').value = creativePreferences.visual_style || '';
+  $('#director-use-memory').checked = creativePreferences.use_memory !== false;
+  $('#director-use-memory').disabled = edit;
+  $('#director-confirm-story').disabled = edit;
+  if (sourceProject) {
+    $('#director-premise').value = sourceProject.premise || '';
+    $('#director-continuity-notes').value = sourceProject.continuity_notes || '';
+    $('#director-duration').value = String(sourceProject.target_seconds || 60);
+    $('#director-ratio').value = sourceProject.aspect_ratio || '9:16';
+    $('#director-resolution').value = sourceProject.resolution || '768P';
+    $('#director-style').value = sourceProject.visual_style || '';
+    if (!edit && sourceProject.feedback?.notes) {
+      $('#director-premise').value = `${sourceProject.premise}\n\n本版修改要求：${sourceProject.feedback.notes}`.slice(0, 8000);
+    }
+    if (edit) $('#director-use-memory').checked = Boolean(sourceProject.personalization?.memory_enabled);
   }
+  if (edit) title.textContent = '编辑当前草案';
   updateDirectorModeSummary();
   $('#director-start-dialog').showModal();
   window.setTimeout(() => $('#director-premise').focus(), 80);
@@ -1303,10 +1530,12 @@ function updateDirectorModeSummary() {
   $('#director-start-submit').textContent = requireStoryConfirmation
     ? '保存故事并进入确认'
     : (directorOneClickMode ? `立即预演并准备约 ${estimatedShots} 个镜头` : '立即启动总导演文本预演');
+  panel.querySelector('span').textContent += '文本规划完成后，还会展示故事与分镜供你确认，再生成视频。';
+  if (editingDirectorDraft) $('#director-start-submit').textContent = '保存草案修改';
 }
 
 function videoStatusLabel(status) {
-  return { queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[status] || status;
+  return { awaiting_confirmation: '等待确认', queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[status] || status;
 }
 
 function videoCreatedAt(value) {
@@ -1350,6 +1579,10 @@ function renderStudioVideo(job, project = null) {
   const prompt = document.createElement('p');
   prompt.textContent = job.prompt;
   detail.append(heading, meta, prompt);
+
+  if (job.status === 'awaiting_confirmation') {
+    detail.appendChild(videoConfirmButton(job, loadVideoGallery));
+  }
 
   if (job.status === 'completed' && job.download_url) {
     const download = document.createElement('a');
@@ -1660,8 +1893,11 @@ async function showStudioGuide() {
 $('#view-deliverable').addEventListener('click', () => $('#shot-heading').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 $('#new-project').addEventListener('click', () => showDirectorStart(false));
 $('#start-director-project').addEventListener('click', () => showDirectorStart(false));
-$('#one-click-movie').addEventListener('click', () => showDirectorStart(true));
-$('#project-settings').addEventListener('click', () => showDirectorStart(false));
+$('#one-click-movie').addEventListener('click', () => showDirectorStart(true, activeDirectorProject));
+$('#project-settings').addEventListener('click', () => showDirectorStart(
+  activeDirectorProject?.one_click || false, activeDirectorProject,
+  activeDirectorProject?.status === 'awaiting_confirmation',
+));
 $('#show-all-shots').addEventListener('click', () => {
   const planned = activeDirectorProject?.planned_shots || activeDirectorProject?.shots?.length || 0;
   notify(planned ? `当前项目共 ${planned} 镜，画板已展示全部真实分镜` : '当前项目还没有生成分镜');
@@ -1691,23 +1927,26 @@ $('#director-start-form').addEventListener('submit', async (event) => {
   button.disabled = true;
   button.textContent = '正在匹配 Agent 模型…';
   try {
-    const project = await api('/director/projects', {
-      method: 'POST',
-      body: JSON.stringify({
+    const values = {
         premise: $('#director-premise').value.trim(),
         target_seconds: Number($('#director-duration').value),
         aspect_ratio: $('#director-ratio').value,
         resolution,
-        visual_style: $('#director-style').value,
+        visual_style: $('#director-style').value.trim(),
         continuity_notes: $('#director-continuity-notes').value.trim(),
-        one_click: directorOneClickMode,
-        story_confirmed: !requireStoryConfirmation,
-      }),
+    };
+    if (!editingDirectorDraft) Object.assign(values, {
+      one_click: directorOneClickMode, story_confirmed: !requireStoryConfirmation,
+      use_memory: $('#director-use-memory').checked,
+    });
+    const project = await api(editingDirectorDraft ? `/director/projects/${editingDirectorDraft}` : '/director/projects', {
+      method: editingDirectorDraft ? 'PATCH' : 'POST',
+      body: JSON.stringify(values),
     });
     $('#director-start-dialog').close();
     renderDirectorProject(project);
     switchWorkspace('studio');
-    notify(requireStoryConfirmation
+    notify(editingDirectorDraft ? '草案修改已保存。' : requireStoryConfirmation
       ? '故事草案已保存，尚未调用任何 Agent 或视频模型。请核对后点击“确认故事并开始预演”。'
       : '总导演文本预演已启动；只有至少两轮复核且评分达到 90 分才会调用视频模型。');
   } catch (error) {
@@ -1733,8 +1972,7 @@ $('#guide-go-chat').addEventListener('click', () => {
 
 updateStudioProgress();
 
-const initialWorkspace = window.localStorage.getItem('assistant-workspace');
-if (initialWorkspace === 'studio') switchWorkspace('studio');
+switchWorkspace('studio');
 
 if (resetToken) {
   $('#standard-auth').classList.add('hidden');

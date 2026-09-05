@@ -48,7 +48,7 @@ echo "Applying database migrations..."
 "${compose_cmd[@]}" run --rm --no-deps assistant-api alembic upgrade head
 
 echo "Starting application services..."
-application_services=(assistant-api admin-api nginx)
+application_services=(assistant-api admin-api worker nginx)
 if [[ "${pi_enabled}" == "true" ]]; then
     application_services=(pi-runtime "${application_services[@]}")
 fi

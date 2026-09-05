@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -12,7 +13,11 @@ from assistant_app.db.runtime import RuntimeDependencies
 logger = logging.getLogger(__name__)
 
 REDACTED = "***REDACTED***"
-_API_KEY_FIELD = re.compile(r"^(?:authorization|x[-_]?api[-_]?key|api[-_]?key|apikey)$", re.I)
+MAX_PAYLOAD_CHARS = 65_536
+_API_KEY_FIELD = re.compile(
+    r"(?:authorization|cookie|password|passwd|secret|(?<![a-z])token(?![a-z])|auth.?code|"
+    r"email.?code|captcha.?answer|api.?key|query_string)", re.I
+)
 _API_KEY_VALUE = re.compile(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{8,}\b")
 _API_KEY_ASSIGNMENT = re.compile(
     r"(?i)(api[-_ ]?key\s*[:=]\s*)([^\s,;}&]+)"
@@ -20,16 +25,21 @@ _API_KEY_ASSIGNMENT = re.compile(
 
 
 def redact_api_keys(value: Any) -> Any:
-    """Preserve request/model content while masking only API-key-shaped values."""
+    """Recursively redact credentials, including nested provider payloads."""
 
     if isinstance(value, Mapping):
         return {
-            str(key): REDACTED if _API_KEY_FIELD.fullmatch(str(key)) else redact_api_keys(item)
+            str(key): REDACTED if _API_KEY_FIELD.search(str(key)) else redact_api_keys(item)
             for key, item in value.items()
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [redact_api_keys(item) for item in value]
     if isinstance(value, str):
+        if value.lstrip().startswith(("{", "[")):
+            try:
+                return json.dumps(redact_api_keys(json.loads(value)), ensure_ascii=False)
+            except (ValueError, RecursionError):
+                return REDACTED
         masked = _API_KEY_VALUE.sub(REDACTED, value)
         return _API_KEY_ASSIGNMENT.sub(lambda match: f"{match.group(1)}{REDACTED}", masked)
     return value
@@ -37,7 +47,20 @@ def redact_api_keys(value: Any) -> Any:
 
 def serialize_payload(value: Any) -> str:
     sanitized = redact_api_keys(value)
-    return json.dumps(sanitized, ensure_ascii=False, default=str, separators=(",", ":"))
+    encoded = json.dumps(sanitized, ensure_ascii=False, default=str, separators=(",", ":"))
+    if len(encoded) > MAX_PAYLOAD_CHARS:
+        return json.dumps({"omitted": True, "reason": "payload too large"})
+    return encoded
+
+
+def safe_stored_payload(value: str | None) -> str | None:
+    """Apply the current policy when displaying traces written by older versions."""
+    if value is None:
+        return None
+    try:
+        return serialize_payload(json.loads(value))
+    except (ValueError, TypeError):
+        return json.dumps({"body_omitted": True, "reason": "legacy unstructured payload"})
 
 
 def decode_http_body(body: bytes, content_type: str) -> Any:
@@ -77,7 +100,7 @@ async def record_request_log(
     """Persist an operational trace without ever failing the business request."""
 
     try:
-        async with runtime.sessions() as session:
+        async with asyncio.timeout(2), runtime.sessions() as session:
             session.add(
                 RequestLog(
                     request_id=request_id[:64],

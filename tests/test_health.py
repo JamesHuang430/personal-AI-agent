@@ -26,7 +26,9 @@ def test_root_serves_user_interface() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "私人 AI 助理" in response.text
+    assert "懂你的 AI 视频工作室" in response.text
+    assert 'id="points-btn"' not in response.text
+    assert 'id="creative-preferences-form"' in response.text
     assert '<select id="model-select"' in response.text
     assert 'id="model-custom"' in response.text
     assert 'id="video-gallery-list"' in response.text
@@ -38,8 +40,8 @@ def test_root_serves_user_interface() -> None:
     assert 'id="director-confirm-story"' in response.text
     assert 'id="director-approval-dialog"' in response.text
     assert 'id="director-approval-confirm"' in response.text
-    assert 'styles.css?v=1.1' in response.text
-    assert 'app.js?v=1.5' in response.text
+    assert 'styles.css?v=1.2' in response.text
+    assert 'app.js?v=1.6' in response.text
     assert 'aria-label="停止生成"' not in response.text
 
 

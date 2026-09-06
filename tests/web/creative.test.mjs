@@ -79,3 +79,68 @@ test('feedback requires explicit opt in and draft editing uses PATCH on the sele
     assert.equal(JSON.parse(edit.options.body).premise,'改成清晨相遇');
   } finally {dom.window.close();}
 });
+
+test('empty opted-in preference shows an error inside the dialog before sending', async () => {
+  const {w,dom,calls,project}=await setup();
+  try {
+    project.status='completed'; w.renderDirectorProject(project);
+    w.document.querySelector('#project-feedback-btn').click();
+    const form=w.document.querySelector('#creative-feedback-form');
+    form.elements.rating.value='4';
+    form.elements.remember.checked=true;
+    form.elements.reusable_preference.value='  ';
+    form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await tick();
+    assert.equal(calls.some(call=>call.url.endsWith('/feedback')),false);
+    const error=form.querySelector('[role="alert"]');
+    assert.equal(error.classList.contains('hidden'),false);
+    assert.match(error.textContent,/取消/);
+    assert.equal(w.document.activeElement,form.elements.reusable_preference);
+    assert.equal(form.querySelector('button').disabled,false);
+    form.elements.remember.checked=false;
+    form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await tick();
+    const sent=calls.find(call=>call.url.endsWith('/feedback'));
+    assert.equal(JSON.parse(sent.options.body).rating,4);
+    assert.equal(JSON.parse(sent.options.body).remember,false);
+    assert.equal(w.document.querySelector('#creative-feedback-dialog').hasAttribute('open'),false);
+  } finally {dom.window.close();}
+});
+
+test('server feedback errors stay visible with input intact and retry available', async () => {
+  const {w,dom,project}=await setup();
+  try {
+    project.status='completed'; w.renderDirectorProject(project);
+    w.document.querySelector('#project-feedback-btn').click();
+    const form=w.document.querySelector('#creative-feedback-form');
+    form.elements.notes.value='字幕再小一点';
+    w.fetch=async()=>({status:409,ok:false,json:async()=>({detail:'制作完成后才能验收作品'})});
+    form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await tick();
+    assert.match(form.querySelector('[role="alert"]').textContent,/制作完成/);
+    assert.equal(form.querySelector('[role="alert"]').classList.contains('hidden'),false);
+    assert.equal(w.document.querySelector('#creative-feedback-dialog').hasAttribute('open'),true);
+    assert.equal(form.elements.notes.value,'字幕再小一点');
+    assert.equal(form.querySelector('button').disabled,false);
+    assert.equal(form.querySelector('button').textContent,'保存验收反馈');
+  } finally {dom.window.close();}
+});
+
+test('saving shows progress, prevents duplicates and submits the explicit preference', async () => {
+  const {w,dom,project}=await setup();
+  try {
+    project.status='completed'; w.renderDirectorProject(project);
+    w.document.querySelector('#project-feedback-btn').click();
+    const form=w.document.querySelector('#creative-feedback-form');
+    form.elements.remember.checked=true;
+    form.elements.reusable_preference.value=' 配乐轻一点 ';
+    let resolve, count=0, saved;
+    w.fetch=async(url,options)=>{count++; saved=JSON.parse(options.body); return new Promise(r=>{resolve=r;});};
+    form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+    form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+    assert.equal(count,1);
+    assert.equal(form.querySelector('button').textContent,'保存中…');
+    assert.equal(saved.reusable_preference,'配乐轻一点');
+    assert.equal(saved.remember,true);
+    resolve({status:200,ok:true,json:async()=>({...project,feedback:saved})}); await tick();
+    assert.equal(w.document.querySelector('#creative-feedback-dialog').hasAttribute('open'),false);
+    assert.equal(form.querySelector('button').disabled,false);
+  } finally {dom.window.close();}
+});

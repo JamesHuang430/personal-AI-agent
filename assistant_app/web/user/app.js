@@ -1382,6 +1382,9 @@ $('#creative-preferences-form').addEventListener('submit', async event => {
 $('#project-feedback-btn').addEventListener('click', () => {
   if (!activeDirectorProject) return;
   const form = $('#creative-feedback-form'); form.reset();
+  $('#creative-feedback-error').textContent = '';
+  $('#creative-feedback-error').classList.add('hidden');
+  form.elements.reusable_preference.removeAttribute('aria-invalid');
   form.dataset.projectId = activeDirectorProject.id;
   const saved = activeDirectorProject.feedback || {};
   for (const key of ['verdict', 'rating', 'notes', 'reusable_preference']) {
@@ -1393,17 +1396,33 @@ $('#project-feedback-btn').addEventListener('click', () => {
 $('#creative-feedback-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const button = form.querySelector('[type="submit"]'); button.disabled = true;
-  const values = Object.fromEntries(['verdict', 'notes', 'reusable_preference'].map(key => [key, form.elements[key].value.trim()]));
-  values.rating = Number(form.elements.rating.value);
-  values.remember = form.elements.remember.checked;
+  const button = form.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  const errorBox = $('#creative-feedback-error');
+  errorBox.textContent = '';
+  errorBox.classList.add('hidden');
+  form.elements.reusable_preference.removeAttribute('aria-invalid');
+  const label = button.textContent;
   try {
+    const values = Object.fromEntries(['verdict', 'notes', 'reusable_preference'].map(key => [key, form.elements[key].value.trim()]));
+    values.rating = Number(form.elements.rating.value);
+    values.remember = form.elements.remember.checked;
+    if (values.remember && !values.reusable_preference) {
+      form.elements.reusable_preference.setAttribute('aria-invalid', 'true');
+      form.elements.reusable_preference.focus();
+      throw new Error('请填写希望今后记住的具体创作偏好；如果只保存本片评分，请取消“把下面的偏好用于今后的作品”。');
+    }
+    button.disabled = true;
+    button.textContent = '保存中…';
     const project = await api(`/director/projects/${form.dataset.projectId}/feedback`, {method: 'PUT', body: JSON.stringify(values)});
     if (activeDirectorProject?.id === project.id) renderDirectorProject(project);
     $('#creative-feedback-dialog').close();
     notify(values.remember ? '反馈已保存，明确的创作偏好将用于后续作品。' : '已保存本片反馈。');
-  } catch (error) { notify(error.message); }
-  finally { button.disabled = false; }
+  } catch (error) {
+    errorBox.textContent = error.message || '保存失败，请稍后重试。';
+    errorBox.classList.remove('hidden');
+  }
+  finally { button.disabled = false; button.textContent = label; }
 });
 $('#approve-storyboard-btn').addEventListener('click', async () => {
   const project = activeDirectorProject;

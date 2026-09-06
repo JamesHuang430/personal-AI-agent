@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>知伴 · 懂你的 AI 视频工作室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2">
+  <link rel="stylesheet" href="/static/styles.css?v=1.3">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
@@ -442,12 +442,13 @@
       <label>贴合我的喜好程度<select name="rating"><option value="5">5 · 很贴合</option><option value="4">4</option><option value="3" selected>3 · 一般</option><option value="2">2</option><option value="1">1 · 不贴合</option></select></label>
       <label>这部作品的反馈<textarea name="notes" maxlength="2000" placeholder="哪里满意、哪里需要调整"></textarea></label>
       <label class="director-confirm-option"><input name="remember" type="checkbox"><span>把下面的偏好用于今后的作品</span></label>
-      <label>希望今后记住什么<textarea name="reusable_preference" maxlength="1000" placeholder="例如：今后视频对白停顿长一些，配乐再轻一点"></textarea></label>
-      <p>评分和本片意见不会自动变成长期偏好；只有勾选并填写的内容会被记住。</p>
+        <label>希望今后记住什么（勾选后必填）<textarea name="reusable_preference" maxlength="1000" aria-describedby="creative-feedback-error" placeholder="例如：今后视频对白停顿长一些，配乐再轻一点"></textarea></label>
+        <p>评分和本片意见不会自动变成长期偏好；只有勾选并填写的内容会被记住。</p>
+        <p id="creative-feedback-error" role="alert" class="form-error hidden"></p>
       <button class="studio-primary" type="submit">保存验收反馈</button>
     </form>
   </dialog>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=1.6" defer></script>
+    <script src="/static/app.js?v=1.7" defer></script>
 </body>
 </html>

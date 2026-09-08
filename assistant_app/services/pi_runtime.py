@@ -12,6 +12,7 @@ from assistant_app.core.encryption import decrypt_secret
 from assistant_app.core.request_context import current_request_actor, current_request_id
 from assistant_app.db.models import ModelChannel
 from assistant_app.db.runtime import DependencyStatus, RuntimeDependencies
+from assistant_app.services.activity import activity_run, emit_activity
 from assistant_app.services.model_gateway import (
     AGENT_SYSTEM_PROMPT,
     AGENT_TOOLS,
@@ -57,6 +58,8 @@ async def pi_chat_completion(
 
     run_id = str(uuid4())
     await runtime.redis.set(f"pi-runtime:channel:{run_id}", str(channel.id), ex=900)
+    if activity_run.get():
+        await runtime.redis.set(f"pi-runtime:activity:{run_id}", activity_run.get(), ex=900)
     system_parts = [AGENT_SYSTEM_PROMPT]
     if memory_context:
         system_parts.append(memory_context)
@@ -113,6 +116,11 @@ async def pi_chat_completion(
         )
         raise PiRuntimeError("Pi Agent Runtime 暂时不可用") from exc
 
+    await emit_activity(
+        runtime, "Pi 执行循环完成", kind="model",
+        detail=f"模型 {model_name} · {payload.get('turns', 0)} 轮",
+        duration_ms=round((time.perf_counter() - started) * 1000),
+    )
     result = {
         "content": payload["content"].strip(),
         "channel": channel.name,

@@ -15,6 +15,7 @@ from assistant_app.core.encryption import decrypt_secret
 from assistant_app.core.request_context import current_request_actor, current_request_id
 from assistant_app.db.models import ModelChannel
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.activity import emit_activity
 from assistant_app.services.request_logging import record_request_log
 from assistant_app.services.web_search import WebSearchError, fetch_webpage, search_web
 
@@ -301,9 +302,12 @@ async def logged_model_completion(
     started = time.perf_counter()
     request_id = current_request_id() or str(uuid4())
     model_input = {"model": model, "messages": messages, **options}
+    await emit_activity(runtime, model, "processing", kind="model", detail="模型请求已发起")
     try:
         completion = await client.chat.completions.create(**model_input)
     except Exception as exc:
+        await emit_activity(runtime, model, "failed", kind="model",
+                            detail=f"模型请求失败：{type(exc).__name__}")
         await record_request_log(
             runtime,
             request_id=request_id,
@@ -329,6 +333,8 @@ async def logged_model_completion(
         input_payload=model_input,
         output_payload=_model_response_payload(completion),
     )
+    await emit_activity(runtime, model, kind="model", detail="模型响应已接收",
+                        duration_ms=round((time.perf_counter() - started) * 1000))
     return completion
 
 
@@ -490,6 +496,9 @@ async def chat_completion(
             for call in calls:
                 arguments = _tool_arguments(call.function.arguments)
                 name = call.function.name
+                tool_started = time.perf_counter()
+                if name in WEB_TOOL_NAMES:
+                    await emit_activity(runtime, name, "processing", kind="tool")
                 if name not in WEB_TOOL_NAMES:
                     pending_tool_calls.append({"name": name, "arguments": arguments})
                     tool_result: dict[str, object] = {
@@ -546,6 +555,13 @@ async def chat_completion(
                             "status": "error",
                             "message": f"联网检索失败：{type(exc).__name__}",
                         }
+                if name in WEB_TOOL_NAMES:
+                    await emit_activity(
+                        runtime, name,
+                        "failed" if tool_result.get("status") == "error" else "completed",
+                        kind="tool", detail="联网资料处理结束",
+                        duration_ms=round((time.perf_counter() - tool_started) * 1000),
+                    )
                 messages.append(
                     {
                         "role": "tool",

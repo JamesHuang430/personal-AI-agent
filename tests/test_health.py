@@ -40,8 +40,9 @@ def test_root_serves_user_interface() -> None:
     assert 'id="director-confirm-story"' in response.text
     assert 'id="director-approval-dialog"' in response.text
     assert 'id="director-approval-confirm"' in response.text
-    assert 'styles.css?v=1.2' in response.text
-    assert 'app.js?v=1.6' in response.text
+    assert '/static/styles.css?v=' in response.text
+    assert '/static/app.js?v=' in response.text
+    assert '/static/activity.js?v=' in response.text
     assert 'aria-label="停止生成"' not in response.text
 
 

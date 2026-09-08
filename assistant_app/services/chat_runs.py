@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 
 from assistant_app.db.models import ChatRun, User
+from assistant_app.services.activity import activity_run, emit_activity, read_activity
 
 
 async def update_chat_run(runtime, run_id, **values) -> bool:
@@ -100,6 +101,8 @@ async def run_chat_request(runtime, user_id, key, payload, execute):
                     raise RuntimeError("Chat run ownership lost")
 
     # Explicit tasks preserve HTTPException rather than wrapping it in ExceptionGroup.
+    token = activity_run.set(str(run.id))
+    await emit_activity(runtime, "请求已接收", detail="主 Agent 开始处理本轮对话")
     work = asyncio.create_task(execute(run))
     monitor = asyncio.create_task(heartbeat())
     try:
@@ -109,16 +112,23 @@ async def run_chat_request(runtime, user_id, key, payload, execute):
                 await monitor
             result = await work
         result["run_id"] = str(run.id)
+        result["activity"] = await read_activity(runtime)
         await update_chat_run(runtime, run.id, status="completed", response=result)
         return result
     except BaseException as exc:
         work.cancel()
         await asyncio.gather(work, return_exceptions=True)
         message = str(exc.detail) if isinstance(exc, HTTPException) else "请求中断，请查看历史会话"
+        await emit_activity(runtime, "请求未完成", "failed", detail="请检查错误提示后重试")
+        async with runtime.sessions() as session:
+            latest = await session.get(ChatRun, run.id)
+            saved_response = dict(latest.response or {}) if latest else {}
+        saved_response["activity"] = await read_activity(runtime)
         await update_chat_run(
             runtime,
             run.id,
             status="failed",
+            response=saved_response,
             error=message,
             error_status=exc.status_code if isinstance(exc, HTTPException) else 409,
         )
@@ -127,3 +137,4 @@ async def run_chat_request(runtime, user_id, key, payload, execute):
         monitor.cancel()
         work.cancel()
         await asyncio.gather(work, monitor, return_exceptions=True)
+        activity_run.reset(token)

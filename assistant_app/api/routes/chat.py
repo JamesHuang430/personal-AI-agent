@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from assistant_app.api.dependencies import current_user
 from assistant_app.db.models import ChatRun, User
+from assistant_app.services.activity import emit_activity, read_activity
 from assistant_app.services.agent_model_router import route_agent_models
 from assistant_app.services.chat_runs import run_chat_request, update_chat_run
 from assistant_app.services.chat_tools import execute_tools
@@ -53,6 +54,23 @@ from assistant_app.services.video_gateway import (
 router = APIRouter()
 
 
+@router.get("/activity")
+async def chat_activity(
+    key: str, request: Request, user: Annotated[User, Depends(current_user)],
+) -> dict[str, object]:
+    async with request.app.state.runtime.sessions() as session:
+        run = await session.scalar(select(ChatRun).where(
+            ChatRun.idempotency_key == key, ChatRun.user_id == user.id,
+        ))
+    if run is None:
+        return {"status": "pending", "activity": []}
+    events = await read_activity(request.app.state.runtime, str(run.id))
+    return {
+        "run_id": str(run.id), "status": run.status,
+        "activity": events or (run.response or {}).get("activity", []),
+    }
+
+
 @router.get("/runs/{run_id}")
 async def chat_run_status(
     run_id: UUID, request: Request, user: Annotated[User, Depends(current_user)],
@@ -67,6 +85,8 @@ async def chat_run_status(
         "run_id": str(run.id), "status": run.status, "error": run.error,
         "conversation_id": str(run.conversation_id) if run.conversation_id else None,
         "result": run.response,
+        "activity": await read_activity(request.app.state.runtime, str(run.id))
+        or (run.response or {}).get("activity", []),
     }
 
 
@@ -294,6 +314,7 @@ async def _execute_chat(
             raise ValueError(
                 f"每次最多使用 {request.app.state.settings.document_max_files_per_message} 个附件"
             )
+        await emit_activity(request.app.state.runtime, "读取会话与附件", "processing")
         documents = await get_owned_documents(
             request.app.state.runtime,
             user.id,
@@ -320,6 +341,14 @@ async def _execute_chat(
             user.id,
             payload.message.strip(),
         )
+        await emit_activity(
+            request.app.state.runtime, "上下文准备完成",
+            detail=f"附件 {len(documents)} 个 · 记忆 {memory_context.memory_count} 条",
+        )
+        await emit_activity(
+            request.app.state.runtime, "主 Agent", "processing", kind="agent",
+            detail=f"模型 {payload.model} · 正在生成回答并选择工具",
+        )
         result = await routed_chat_completion(
             request.app.state.runtime,
             request.app.state.settings,
@@ -330,6 +359,10 @@ async def _execute_chat(
                 "preferences": getattr(user, "creative_preferences", None) or {},
             }),
             document_context,
+        )
+        await emit_activity(
+            request.app.state.runtime, "主 Agent", kind="agent",
+            detail=f"模型返回完成 · 待执行工具 {len(result.get('tool_calls', []))} 个",
         )
         async def checkpoint(artifacts):
             owned = await update_chat_run(request.app.state.runtime, run.id, response=artifacts)
@@ -353,6 +386,8 @@ async def _execute_chat(
         elif not result.get("content"):
             result["content"] = "模型没有返回文本内容。"
         result["documents"] = [uploaded_document_payload(record) for record in documents]
+        await emit_activity(request.app.state.runtime, "执行完成", detail="回答与交付物已整理")
+        result["activity"] = await read_activity(request.app.state.runtime)
         assistant_message = await record_assistant_message(
             request.app.state.runtime,
             user.id,

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from assistant_app.services.activity import emit_activity
 from assistant_app.services.director import create_director_project, project_payload
 from assistant_app.services.generated_files import create_generated_file, file_payload
 from assistant_app.services.music_gateway import create_music_job, music_job_payload
@@ -123,6 +125,8 @@ async def execute_tools(runtime, settings, user_id, calls, checkpoint):
     notices = []
     for index, call in enumerate(calls[:3]):
         name = call.get("name", "")
+        started = time.perf_counter()
+        await emit_activity(runtime, name, "processing", kind="tool", detail="校验参数并执行")
         outcome = {"name": name, "index": index, "status": "processing"}
         artifacts["tool_results"].append(outcome)
         # Persist intent before performing a side effect; failed runs are never replayed.
@@ -138,5 +142,11 @@ async def execute_tools(runtime, settings, user_id, calls, checkpoint):
         except Exception as exc:
             outcome.update(status="failed", error=type(exc).__name__)
             notices.append(f"工具 {name} 未完成（{type(exc).__name__}），请检查参数或渠道配置。")
+        await emit_activity(
+            runtime, name, outcome["status"], kind="tool",
+            detail=(f"交付物 {outcome['resource_id']}" if outcome.get("resource_id")
+                    else f"执行失败：{outcome.get('error', '未知错误')}"),
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
         await checkpoint(artifacts)
     return artifacts, notices

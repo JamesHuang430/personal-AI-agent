@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -21,6 +23,7 @@ from assistant_app.db.models import (
     VideoJob,
 )
 from assistant_app.db.runtime import RuntimeDependencies
+from assistant_app.services.activity import activity_run, emit_activity, read_activity
 from assistant_app.services.agent_model_router import (
     AGENT_MODEL_PROFILES,
     route_agent_models,
@@ -717,6 +720,8 @@ def agent_run_payload(run: DirectorAgentRun) -> dict[str, object]:
         "sequence": run.sequence,
         "model": run.model_name,
         "status": run.status,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
         "decision_summary": run.decision_summary,
         "deliverable": run.deliverable,
         "result_data": run.result_data or {},
@@ -800,6 +805,7 @@ async def project_payload(
     visual_run = next((run for run in runs if run.agent_key == "visual"), None)
     visual_data = dict(visual_run.result_data or {}) if visual_run else {}
     director_preflight = dict(visual_data.get("director_preflight") or {})
+    events = await read_activity(runtime, f"director:{project.id}")
     return {
         "id": str(project.id),
         "title": project.title,
@@ -825,6 +831,7 @@ async def project_payload(
         "storyboard_hash": storyboard_hash(project, visual_data),
         "review_required": bool(project.review_required),
         "director_preflight": director_preflight,
+        "activity": events or (project.quality_report or {}).get("execution_activity", []),
         "error_message": project.error_message if project.status == "failed" else None,
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "agents": [agent_run_payload(run) for run in runs],
@@ -1131,6 +1138,11 @@ async def _update_run(
         for key, value in values.items():
             setattr(run, key, value)
         run.updated_at = datetime.now(UTC)
+    if "status" in values:
+        await emit_activity(
+            runtime, run.agent_name, str(values["status"]), kind="agent",
+            detail=f"模型 / 执行器：{run.model_name}", run_id=f"director:{run.project_id}",
+        )
 
 
 async def _completed_context(runtime: RuntimeDependencies, project_id: UUID) -> str:
@@ -1289,13 +1301,19 @@ async def _create_and_run_shot(
             schedule=False,
         )
         await _update_shot(runtime, shot.id, video_job_id=job.id)
+    media_started = time.perf_counter()
+    await emit_activity(runtime, f"第 {sequence} 镜 · 视频生成", "processing", kind="tool",
+                        detail=f"视频任务 {job.id} · {seconds} 秒 · {size}")
     await run_video_job(runtime, settings, job.id)
     async with runtime.sessions() as session:
         completed_job = await session.get(VideoJob, job.id)
     if completed_job is None or completed_job.status != "completed":
+        await emit_activity(runtime, f"第 {sequence} 镜 · 视频生成", "failed", kind="tool")
         message = completed_job.error_message if completed_job else "视频任务不存在"
         await _update_shot(runtime, shot.id, status="failed", error_message=message)
         raise RuntimeError(message or "镜头生成失败")
+    await emit_activity(runtime, f"第 {sequence} 镜 · 视频生成", kind="tool",
+                        duration_ms=round((time.perf_counter() - media_started) * 1000))
     async with runtime.sessions() as session:
         video_channel = await session.get(VideoChannel, completed_job.channel_id)
     original_info = await _probe_media(str(completed_job.storage_path or ""))
@@ -1311,6 +1329,8 @@ async def _create_and_run_shot(
     )
     completed_speech: SpeechJob | None = None
     if native_h3:
+        await emit_activity(runtime, f"第 {sequence} 镜 · 原生音轨与字幕合成", "processing",
+                            kind="tool", detail="保留原生音轨，烧录字幕")
         rendered_path = await _render_native_audio_shot(
             shot,
             completed_job,
@@ -1337,13 +1357,20 @@ async def _create_and_run_shot(
                 schedule=False,
             )
             await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
+        await emit_activity(runtime, f"第 {sequence} 镜 · 语音生成", "processing", kind="tool",
+                            detail=f"语音任务 {speech_job.id}")
         await run_speech_job(runtime, settings, speech_job.id)
         async with runtime.sessions() as session:
             completed_speech = await session.get(SpeechJob, speech_job.id)
         if completed_speech is None or completed_speech.status != "completed":
+            await emit_activity(runtime, f"第 {sequence} 镜 · 语音生成", "failed", kind="tool")
             message = completed_speech.error_message if completed_speech else "语音任务不存在"
             await _update_shot(runtime, shot.id, status="failed", error_message=message)
             raise RuntimeError(message or "语音生成失败")
+        await emit_activity(runtime, f"第 {sequence} 镜 · 语音生成", kind="tool")
+        await emit_activity(
+            runtime, f"第 {sequence} 镜 · 配音与字幕合成", "processing", kind="tool",
+        )
         rendered_path = await _render_dialogue_shot(
             shot,
             completed_job,
@@ -1352,6 +1379,7 @@ async def _create_and_run_shot(
             subtitle_end_seconds=dialogue_end,
         )
         audio_source = "external_tts_fallback"
+    await emit_activity(runtime, f"第 {sequence} 镜 · 声画合成完成", kind="tool")
     media_snapshot["_media"] = {
         **dict(media_snapshot["_media"]),
         "audio_source": audio_source,
@@ -1539,6 +1567,7 @@ async def _run_director_preflight(
         "包含 continuity 和原数量 shots，不得只给修改片段。"
     )
     for attempt in range(1, DIRECTOR_PREFLIGHT_MAX_ATTEMPTS + 1):
+        await emit_activity(runtime, f"总导演预演 · 第 {attempt} 轮", "processing", kind="review")
         phase = "全面审查并重写" if attempt == 1 else "复核上一版修订并做最终收敛"
         user_prompt = (
             f"项目：{project.title}\n用户已确认故事：{project.premise}\n目标时长："
@@ -1564,12 +1593,19 @@ async def _run_director_preflight(
             report = _validate_director_preflight(parsed, project, durations)
         except ValueError as exc:
             feedback = f"结构化预演无效：{exc}"
+            await emit_activity(runtime, f"总导演预演 · 第 {attempt} 轮", "failed",
+                                kind="review", detail="结构化交付未通过校验，准备重试")
             last_report = None
             attempts.append(
                 {"attempt": attempt, "approved": False, "score": 0, "verdict": feedback}
             )
             continue
         candidate = dict(report["revised_visual"])
+        await emit_activity(
+            runtime, f"总导演预演 · 第 {attempt} 轮",
+            "completed" if report["approved"] else "failed", kind="review",
+            detail=f"评分 {report['score']} · {'通过' if report['approved'] else '需修订'}",
+        )
         last_report = report
         attempts.append(
             {
@@ -1631,6 +1667,32 @@ async def _run_director_preflight(
 
 
 async def run_director_project(
+    runtime: RuntimeDependencies,
+    settings: Settings,
+    project_id: UUID,
+) -> None:
+    token = activity_run.set(f"director:{project_id}")
+    try:
+        await emit_activity(runtime, "总导演编排器", "processing", kind="workflow")
+        await _run_director_project(runtime, settings, project_id)
+    finally:
+        try:
+            async with runtime.sessions() as session, session.begin():
+                project = await session.get(DirectorProject, project_id, with_for_update=True)
+                if project:
+                    await emit_activity(runtime, "总导演编排器", project.status, kind="workflow",
+                                        detail=f"当前阶段：{project.current_stage}")
+                    project.quality_report = {
+                        **(project.quality_report or {}),
+                        "execution_activity": await read_activity(runtime),
+                    }
+        except Exception:
+            logging.getLogger(__name__).warning("director_activity_archive_failed")
+        finally:
+            activity_run.reset(token)
+
+
+async def _run_director_project(
     runtime: RuntimeDependencies,
     settings: Settings,
     project_id: UUID,

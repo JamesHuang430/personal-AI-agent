@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from assistant_app.db.models import ModelChannel
+from assistant_app.services.activity import emit_activity, pi_activity_target
 from assistant_app.services.model_gateway import ModelRateLimitError, _enforce_qps
 from assistant_app.services.web_search import WebSearchError, fetch_webpage, search_web
 
@@ -35,6 +37,21 @@ async def execute_pi_tool(
         raise HTTPException(status_code=401, detail="Pi Runtime authentication failed")
 
     allowed_key = f"pi-runtime:web-urls:{payload.run_id}"
+    runtime = request.app.state.runtime
+    target = await pi_activity_target(runtime, payload.run_id)
+    started = time.perf_counter()
+
+    async def event(state, detail):
+        if target:
+            await emit_activity(
+                runtime,
+                "模型请求许可" if payload.name == "model_request_permit" else payload.name,
+                state, kind="model" if payload.name == "model_request_permit" else "tool",
+                detail=detail, run_id=target,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+            )
+
+    await event("processing", "Pi 正在请求执行")
     try:
         if payload.name == "model_request_permit":
             channel_id = await request.app.state.runtime.redis.get(
@@ -78,7 +95,14 @@ async def execute_pi_tool(
         else:
             raise HTTPException(status_code=404, detail="Tool is not allowed through Pi Runtime")
     except (ValueError, WebSearchError, ModelRateLimitError) as exc:
+        await event("failed", f"执行失败：{type(exc).__name__}")
         return {"is_error": True, "message": str(exc)}
     except TimeoutError:
+        await event("failed", "执行超时")
         return {"is_error": True, "message": "联网检索超时"}
+    except Exception:
+        await event("failed", "执行失败，请检查渠道或工具配置")
+        raise
+    await event("completed", "请求许可已发放" if payload.name == "model_request_permit"
+                else "工具结果已返回主 Agent")
     return {"is_error": False, "data": result}

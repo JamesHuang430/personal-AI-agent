@@ -215,6 +215,7 @@ async function openConversation(conversationId) {
     for (const run of result.runs || []) {
       const message = addMessage('assistant', run.error || '该请求正在处理，请稍后刷新会话');
       renderArtifacts(message, run.artifacts || {});
+      if (run.status === 'processing') startLiveChatActivity(message, '', { runId: run.id });
     }
     sessionNeedsOrganization = false;
     $('#organize-session').disabled = false;
@@ -574,26 +575,8 @@ function addMessage(role, content, meta = '') {
   return wrapper;
 }
 
-function startChatProgress(message, model) {
-  const bubble = message.querySelector('.message-bubble');
-  const startedAt = Date.now();
-  const phases = [
-    [0, '正在理解需求并选择执行方式'],
-    [4, '模型正在生成回复或准备工具调用'],
-    [12, '复杂任务仍在执行，请稍候'],
-  ];
-  let timer = null;
-  const render = () => {
-    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-    const phase = [...phases].reverse().find(([after]) => elapsed >= after)?.[1];
-    bubble.innerHTML = `<div class="chat-progress" role="status" aria-live="polite"><span class="chat-progress-mark">✦</span><div><strong>${escapeHtml(phase)}</strong><small>请求已提交给 ${escapeHtml(model)} · ${elapsed} 秒</small><p>完成后会展示实际工具调用、Agent 阶段、生成进度与失败原因；不展示模型的私有思维链。</p></div></div>`;
-  };
-  render();
-  timer = window.setInterval(render, 1000);
-  return () => window.clearInterval(timer);
-}
-
 function renderArtifacts(message, result) {
+  if (result.activity?.length) activityPanel(message.querySelector('.message-bubble'), result.activity);
   const files = result.files || [];
   const documents = result.documents || [];
   const jobs = result.video_jobs || [];
@@ -660,9 +643,7 @@ function renderArtifacts(message, result) {
     });
     updateDirectorArtifactCard(project, card);
     list.appendChild(card);
-    if (['queued', 'processing'].includes(project.status)) {
-      window.setTimeout(() => pollDirectorArtifact(project.id, card), 2000);
-    }
+    window.setTimeout(() => pollDirectorArtifact(project.id, card), 1000);
   }
   message.querySelector('.message-bubble').appendChild(list);
 }
@@ -700,6 +681,7 @@ function updateDirectorArtifactCard(project, card) {
     : project.error_message
     || `${project.aspect_ratio} · ${project.resolution || '768P'} · ${project.one_click ? `完整 ${project.target_seconds} 秒成片` : '4 秒首镜预览'}`;
   card.classList.toggle('failed', project.status === 'failed');
+  directorExecutionDetails(project, card);
 }
 
 async function pollDirectorArtifact(projectId, card) {
@@ -707,12 +689,14 @@ async function pollDirectorArtifact(projectId, card) {
   try {
     const project = await api(`/director/projects/${projectId}`);
     updateDirectorArtifactCard(project, card);
-    if (['queued', 'processing'].includes(project.status)) {
-      window.setTimeout(() => pollDirectorArtifact(projectId, card), 3500);
-    }
+    window.setTimeout(() => pollDirectorArtifact(projectId, card),
+      ['queued', 'processing'].includes(project.status) ? 3500 : 15000);
   } catch (error) {
     card.classList.add('failed');
     card.querySelector('[data-director-card-detail]').textContent = error.message;
+    if (![401, 403, 404].includes(error.status)) {
+      window.setTimeout(() => pollDirectorArtifact(projectId, card), 15000);
+    }
   }
 }
 
@@ -861,7 +845,7 @@ async function sendMessage(text) {
   activeChatController = controller;
   setChatGenerating(true);
   const pending = addMessage('assistant', '正在处理请求…');
-  const stopChatProgress = startChatProgress(pending, selectedModel);
+  const stopChatProgress = startLiveChatActivity(pending, selectedModel, requestKey);
   try {
     const result = await api('/chat', {
       method: 'POST',
@@ -905,6 +889,7 @@ async function sendMessage(text) {
     } else {
       pending.remove();
       const failure = addMessage('assistant', `暂时无法回答：${error.message}`);
+      if (pending.activityEvents?.length) activityPanel(failure.querySelector('.message-bubble'), pending.activityEvents);
       renderArtifacts(failure, error.detail?.artifacts || {});
       if (error.detail?.status !== 'failed') {
         addChatRetry(failure, { body: requestBody, key: requestKey });

@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 from sqlalchemy import select
 
 from assistant_app.core.config import Settings
@@ -17,6 +17,13 @@ from assistant_app.db.models import ModelChannel
 from assistant_app.db.runtime import RuntimeDependencies
 from assistant_app.services.activity import emit_activity
 from assistant_app.services.request_logging import record_request_log
+from assistant_app.services.text_model_retry import (
+    MAX_TEXT_ATTEMPTS,
+    TextModelRequestError,
+    public_text_error,
+    retry_delay,
+    retryable_text_error,
+)
 from assistant_app.services.web_search import WebSearchError, fetch_webpage, search_web
 
 
@@ -304,43 +311,58 @@ async def logged_model_completion(
 ) -> Any:
     """Call an OpenAI-compatible text model and retain its exact input/output trace."""
 
-    started = time.perf_counter()
     request_id = current_request_id() or str(uuid4())
     model_input = {"model": model, "messages": messages, **options}
-    await emit_activity(runtime, model, "processing", kind="model", detail="模型请求已发起")
-    try:
-        completion = await client.chat.completions.create(**model_input)
-    except Exception as exc:
-        await emit_activity(runtime, model, "failed", kind="model",
-                            detail=f"模型请求失败：{type(exc).__name__}")
+    # Retry the single text HTTP request, not the agent loop or already executed tools.
+    # SDK retries stay disabled; every attempt passes through QPS gating and logging.
+    max_attempts = 1 if options.get("stream") else MAX_TEXT_ATTEMPTS
+    for attempt in range(1, max_attempts + 1):
+        started = time.perf_counter()
+        logged_input = {**model_input, "_retry": {"attempt": attempt, "max_attempts": max_attempts}}
+        await emit_activity(runtime, model, "processing", kind="model",
+                            detail=f"文本模型请求 · 第 {attempt}/{max_attempts} 次")
+        try:
+            completion = await client.chat.completions.create(**model_input)
+        except Exception as exc:
+            await record_request_log(
+                runtime, request_id=request_id, category="model", source=source,
+                actor=current_request_actor(), status_code=getattr(exc, "status_code", 500),
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                model_name=model, input_payload=logged_input,
+                error_message=f"{type(exc).__name__}: {exc}",
+            )
+            if not isinstance(exc, (APIConnectionError, APIStatusError)):
+                await emit_activity(runtime, model, "failed", kind="model",
+                                    detail=f"模型请求失败：{type(exc).__name__}")
+                raise
+            description = public_text_error(exc)
+            retryable = retryable_text_error(exc)
+            delay = retry_delay(exc, attempt) if retryable and attempt < max_attempts else None
+            if delay is not None:
+                await emit_activity(
+                    runtime, f"{model} · 自动重试", "processing", kind="retry",
+                    detail=f"{description}；等待 {delay:.1f} 秒后进行第 {attempt + 1}"
+                           f"/{max_attempts} 次请求（仅重试本次文本调用）。",
+                )
+                # Async wait preserves worker lease heartbeats and propagates cancellation.
+                await asyncio.sleep(delay)
+                continue
+            message = f"{description}；已尝试 {attempt} 次。"
+            message += "请稍后继续制作。" if retryable else "请修正渠道配置或请求后再继续。"
+            await emit_activity(runtime, model, "failed", kind="model", detail=message)
+            raise TextModelRequestError(message) from exc
         await record_request_log(
-            runtime,
-            request_id=request_id,
-            category="model",
-            source=source,
-            actor=current_request_actor(),
-            status_code=500,
+            runtime, request_id=request_id, category="model", source=source,
+            actor=current_request_actor(), status_code=200,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
-            model_name=model,
-            input_payload=model_input,
-            error_message=f"{type(exc).__name__}: {exc}",
+            model_name=model, input_payload=logged_input,
+            output_payload=_model_response_payload(completion),
         )
-        raise
-    await record_request_log(
-        runtime,
-        request_id=request_id,
-        category="model",
-        source=source,
-        actor=current_request_actor(),
-        status_code=200,
-        duration_ms=round((time.perf_counter() - started) * 1000, 2),
-        model_name=model,
-        input_payload=model_input,
-        output_payload=_model_response_payload(completion),
-    )
-    await emit_activity(runtime, model, kind="model", detail="模型响应已接收",
-                        duration_ms=round((time.perf_counter() - started) * 1000))
-    return completion
+        await emit_activity(
+            runtime, model, kind="model", detail=f"模型响应已接收（第 {attempt} 次）",
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return completion
 
 
 def _tool_arguments(raw: str) -> dict[str, Any]:

@@ -86,6 +86,11 @@ AGENT_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "production_mode": {
+                        "type": "string", "enum": ["whiteboard", "video"],
+                        "description": "默认 whiteboard：生图+配音+本地白板动画，不是全免费。"
+                                       "仅用户选择动态视频时用 video，禁止静默升级付费视频。",
+                    },
                     "premise": {"type": "string", "description": "故事创意、人物与核心冲突"},
                     "target_seconds": {
                         "type": "integer",

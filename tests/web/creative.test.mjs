@@ -46,6 +46,26 @@ test('studio is the default, preferences are editable and legacy upsells are rem
   } finally {dom.window.close();}
 });
 
+test('new projects default to whiteboard and old projects preserve their video mode', async () => {
+  const {w,dom,calls,project}=await setup();
+  try {
+    w.showDirectorStart(true);
+    assert.equal(w.document.querySelector('#director-production-mode').value,'whiteboard');
+    assert.match(w.document.querySelector('#director-start-boundary').textContent,/不调用视频模型/);
+    w.document.querySelector('#director-premise').value='介绍光合作用';
+    w.document.querySelector('#director-start-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+    await tick();
+    const request=calls.find(call=>call.url.endsWith('/director/projects') && call.options.method==='POST');
+    assert.equal(JSON.parse(request.options.body).production_mode,'whiteboard');
+    w.showDirectorStart(true,project,true);
+    assert.equal(w.document.querySelector('#director-production-mode').value,'video');
+    project.production_mode='whiteboard';
+    w.renderDirectorProject(project);
+    assert.equal(w.document.querySelectorAll('[data-whiteboard-upload]').length,1);
+    assert.match(w.document.querySelector('#storyboard-review-content').textContent,/跳过付费生图/);
+  } finally {dom.window.close();}
+});
+
 test('storyboard approval submits the displayed digest and escapes creative memory', async () => {
   const {w,dom,calls,project}=await setup();
   try {

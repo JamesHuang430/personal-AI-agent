@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from assistant_app.api.routes.admin import router as admin_router
 from assistant_app.api.routes.health import router as health_router
+from assistant_app.api.routes.image_channels import router as image_router
 from assistant_app.app_factory import create_runtime_app
 from assistant_app.core.config import Settings, get_settings
 
@@ -18,6 +19,7 @@ def create_admin_app(settings: Settings | None = None) -> FastAPI:
     router = APIRouter(prefix=app_settings.api_v1_prefix)
     router.include_router(health_router, prefix="/health", tags=["health"])
     router.include_router(admin_router, prefix="/admin", tags=["admin"])
+    router.include_router(image_router, prefix="/admin", tags=["admin"])
     application.include_router(router)
     application.mount("/static", StaticFiles(directory=WEB_DIR), name="admin-static")
 

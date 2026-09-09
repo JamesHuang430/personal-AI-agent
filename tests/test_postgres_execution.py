@@ -353,3 +353,144 @@ async def test_legacy_status_constraint_upgrade_and_safe_downgrade(db):
                 c.execute(text("UPDATE director_projects SET status='awaiting_storyboard'"))
 
         await connection.run_sync(migrate)
+
+
+@pytest.mark.asyncio
+async def test_whiteboard_migration_preserves_existing_project_mode(db):
+    runtime, engine = db
+    user = await seed(runtime)
+    from assistant_app.db.models import DirectorProject
+
+    async with runtime.sessions() as session, session.begin():
+        session.add(
+            DirectorProject(user_id=user.id, title="old", premise="legacy", visual_style="natural")
+        )
+    migration = importlib.import_module("migrations.versions.20260909_0020_whiteboard")
+    async with engine.begin() as connection:
+
+        def migrate(c):
+            with Operations.context(MigrationContext.configure(c)):
+                migration.downgrade()
+                migration.upgrade()
+                assert (
+                    c.execute(text("SELECT production_mode FROM director_projects")).scalar()
+                    == "video"
+                )
+
+        await connection.run_sync(migrate)
+
+
+@pytest.mark.asyncio
+async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path, monkeypatch):
+    import io
+    import wave
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException, UploadFile
+    from PIL import Image, ImageDraw
+
+    from assistant_app.api.routes import director as routes
+    from assistant_app.db.models import (
+        DirectorAgentRun,
+        DirectorProject,
+        DirectorShot,
+        SpeechChannel,
+        SpeechJob,
+    )
+    from assistant_app.services import director, director_media, image_gateway, whiteboard
+
+    runtime, _ = db
+    user = await seed(runtime)
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=user.id,
+        title="白板测试",
+        premise="介绍太阳与树木",
+        visual_style="白板",
+        production_mode="whiteboard",
+        target_seconds=4,
+        one_click=True,
+        planned_shots=1,
+        status="awaiting_storyboard",
+        review_required=True,
+        storyboard_approved=False,
+    )
+    runs = [
+        DirectorAgentRun(
+            id=uuid4(),
+            project_id=project.id,
+            user_id=user.id,
+            agent_key=key,
+            agent_name=key,
+            sequence=index,
+            model_name="test",
+            status="completed",
+        )
+        for index, key in enumerate(["story", "visual", "media", "quality"])
+    ]
+    runs[1].result_data = {
+        "shots": [
+            {"title": "阳光", "speech_text": "阳光照耀着树木。", "positive_prompt": "sun and tree"}
+        ],
+        "continuity": {},
+    }
+    async with runtime.sessions() as session, session.begin():
+        session.add(project)
+        await session.flush()
+        session.add_all(runs)
+        session.add(
+            SpeechChannel(
+                name="mock",
+                base_url="https://invalid.test",
+                model_name="mock",
+                default_voice_id="mock",
+                encrypted_api_key="mock",
+                is_active=True,
+            )
+        )
+    for module in (routes, director_media, whiteboard, image_gateway):
+        monkeypatch.setattr(module, "GENERATED_ROOT", tmp_path)
+    monkeypatch.setattr(director, "read_activity", AsyncMock(return_value=[]))
+    # Only model-independent fixture artwork and synthetic audio are used by this test.
+    picture = Image.new("RGB", (320, 180), "white")
+    draw = ImageDraw.Draw(picture)
+    draw.ellipse((220, 15, 275, 70), fill="#ffdc72", outline="black", width=2)
+    draw.rectangle((90, 80, 100, 150), fill="#996633")
+    draw.ellipse((55, 25, 140, 110), fill="#6cb886", outline="black", width=2)
+    buffer = io.BytesIO()
+    picture.save(buffer, "PNG")
+    data = buffer.getvalue()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runtime=runtime)))
+    with pytest.raises(HTTPException) as error:
+        await routes.upload_storyboard_image(
+            project.id, 1, UploadFile(io.BytesIO(data)), request, SimpleNamespace(id=uuid4())
+        )
+    assert error.value.status_code == 404
+    previous = director.storyboard_hash(project, runs[1].result_data)
+    uploaded = await routes.upload_storyboard_image(
+        project.id, 1, UploadFile(io.BytesIO(data)), request, user
+    )
+    assert uploaded["storyboard_hash"] != previous
+
+    async def fake_speech(runtime, settings, job_id):
+        path = tmp_path / f"{job_id}.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+            wav.writeframes(b"\x00\x00" * 24000)
+        async with runtime.sessions() as session, session.begin():
+            speech = await session.get(SpeechJob, job_id)
+            speech.status, speech.storage_path = "completed", str(path)
+
+    monkeypatch.setattr(whiteboard, "run_speech_job", fake_speech)
+    paid = AsyncMock(side_effect=AssertionError("No paid video calls allowed"))
+    monkeypatch.setattr(director, "run_video_job", paid)
+    await whiteboard.run_whiteboard_media(runtime, None, project, runs[2], runs[3])
+    async with runtime.sessions() as session:
+        result = await session.get(DirectorProject, project.id)
+        shots = (await session.scalars(select(DirectorShot))).all()
+        assert result.status == "completed" and result.quality_report["passed"]
+        assert shots[0].image_source == "uploaded" and shots[0].video_job_id is None
+        assert shots[0].image_submission_started_at is None
+        assert result.quality_report["final"]["audio"]
+        assert result.quality_report["final"]["video"]
+    paid.assert_not_awaited()

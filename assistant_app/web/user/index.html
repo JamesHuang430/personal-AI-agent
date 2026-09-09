@@ -344,6 +344,9 @@
         <small>视觉 Agent 会把角色、关系、外貌、服装、声线和定妆照登记为连续性圣经，后续镜头和配音共用。</small>
       </label>
       <div class="director-form-grid">
+        <label>制作渠道
+          <select id="director-production-mode"><option value="whiteboard" selected>白板手绘（图片 + 旁白，本地合成）</option><option value="video">动态视频（已配置视频渠道 / MiniMax）</option></select>
+        </label>
         <label>目标时长
           <select id="director-duration"><option value="4">4 秒试片</option><option value="30">30 秒</option><option value="60" selected>60 秒</option><option value="180">3 分钟</option><option value="300">5 分钟</option></select>
         </label>
@@ -351,7 +354,7 @@
           <select id="director-ratio"><option value="9:16" selected>9:16 竖屏</option><option value="16:9">16:9 横屏</option></select>
         </label>
         <label>清晰度
-          <select id="director-resolution"><option value="768P" selected>768P（快速预览）</option><option value="2K">2K（高清成片）</option></select>
+          <select id="director-resolution"><option value="768P" selected>标准清晰度</option><option value="2K">高清成片</option></select>
         </label>
         <label>视觉风格
           <input id="director-style" maxlength="100" placeholder="留空使用创作偏好，例如：复古胶片">
@@ -450,6 +453,6 @@
   </dialog>
   <div id="toast" class="toast hidden"></div>
     <script src="/static/activity.js?v=1.0" defer></script>
-    <script src="/static/app.js?v=1.8" defer></script>
+    <script src="/static/app.js?v=1.9" defer></script>
 </body>
 </html>

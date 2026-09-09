@@ -1299,8 +1299,15 @@ function renderCreativeContext(project) {
   const context = $('#project-personalization');
   context.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = '本次创意与制作设定优先；以下是规划时的参考快照。';
+  note.textContent = `${project.production_mode === 'whiteboard' ? '白板手绘 · 图片 + 旁白 + 本地合成（无视频模型）' : '动态视频渠道'}。本次创意与制作设定优先；以下是规划时的参考快照。`;
   context.append(note);
+  if (project.production_mode === 'whiteboard') {
+    const readiness = document.createElement('p');
+    readiness.textContent = '正在检查图片和语音渠道配置…'; context.append(readiness);
+    api('/director/whiteboard-readiness').then(state => {
+      readiness.textContent = `${state.image_configured ? '图片渠道已配置' : '图片渠道未配置（可为每镜上传图片）'}；${state.speech_configured ? '语音渠道已配置' : '语音渠道未配置，请管理员启用后再生成'}。配置不代表余额或权限已验证。`;
+    }).catch(() => { readiness.textContent = '渠道状态暂不可用，请生成前检查后台配置。'; });
+  }
   if (!explicit.length && !memories.length) {
     const empty = document.createElement('p');
     empty.textContent = '本片未采用历史偏好，将按本次要求创作。可在“创作偏好”中设置今后的默认风格。';
@@ -1331,7 +1338,8 @@ function renderCreativeContext(project) {
     ? `${project.feedback.verdict === 'accepted' ? '已验收 · 满意' : '待修改'} · 贴合度 ${project.feedback.rating}/5 · ${project.feedback.notes || ''}`
     : (project.status === 'completed' ? '技术检查通过，等待你观看并验收。' : '');
   const panel = $('#storyboard-review-panel');
-  panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard');
+  panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard' && !(project.production_mode === 'whiteboard' && project.status === 'failed'));
+  $('#approve-storyboard-btn').classList.toggle('hidden', project.status !== 'awaiting_storyboard');
   const story = project.agents?.find(item => item.agent === 'story')?.result_data || {};
   $('#storyboard-review-content').innerHTML = `<p>${escapeHtml(story.script || project.premise)}</p>`
     + (project.storyboard || []).map((shot, index) => `<article class="storyboard-review-shot">
@@ -1339,7 +1347,19 @@ function renderCreativeContext(project) {
       <p>${escapeHtml(shot.positive_prompt || shot.action || '')}</p>
       <p>对白：${escapeHtml(shot.speech_text || '')}</p>
       <p>字幕：${escapeHtml(shot.subtitle_text || shot.speech_text || '')}</p>
+      ${project.production_mode === 'whiteboard' ? `<label>可选：上传此镜图片，跳过付费生图 <input type="file" accept="image/png,image/jpeg,image/webp" data-whiteboard-upload="${index + 1}"></label><small>PNG / JPEG / WebP，最多 12 MB。每镜整体描线再上色；字幕时间为估算。</small>` : ''}
     </article>`).join('');
+  if (project.production_mode === 'whiteboard') {
+    $('#storyboard-review-content').querySelectorAll('[data-whiteboard-upload]').forEach(input => {
+      const sequence = Number(input.dataset.whiteboardUpload);
+      const saved = project.shots?.find(item => item.sequence === sequence);
+      input.disabled = saved?.status === 'completed';
+      if (saved?.image_url) {
+        const image = document.createElement('img'); image.src = saved.image_url; image.alt = `第 ${sequence} 镜已保存图片`;
+        image.style.cssText = 'display:block;max-width:240px;max-height:180px;margin:8px 0'; input.parentElement.after(image);
+      }
+    });
+  }
 }
 
 $('#creative-preferences-btn').addEventListener('click', async () => {
@@ -1495,8 +1515,8 @@ function showDirectorStart(oneClick = false, sourceProject = null, edit = false)
   const title = $('#director-start-dialog h2');
   title.textContent = oneClick ? '一键成片' : '开始制作电影';
   $('#director-start-intro').textContent = oneClick
-    ? '总导演编排器将调度 4 位执行 Agent，逐镜生成同步表演、原生声音和定时字幕，并最终合片。'
-    : '总导演编排器会生成一个带同步对白、情绪声音和定时字幕的预览镜头。';
+    ? '选择白板手绘或动态视频，确认故事与分镜后，再逐镜制作并合成为 MP4。'
+    : '确认故事和分镜后，先制作一个带旁白和字幕的预览镜头。';
   $('#director-style').value = creativePreferences.visual_style || '';
   $('#director-use-memory').checked = creativePreferences.use_memory !== false;
   $('#director-use-memory').disabled = edit;
@@ -1507,6 +1527,7 @@ function showDirectorStart(oneClick = false, sourceProject = null, edit = false)
     $('#director-duration').value = String(sourceProject.target_seconds || 60);
     $('#director-ratio').value = sourceProject.aspect_ratio || '9:16';
     $('#director-resolution').value = sourceProject.resolution || '768P';
+    $('#director-production-mode').value = sourceProject.production_mode || 'video';
     $('#director-style').value = sourceProject.visual_style || '';
     if (!edit && sourceProject.feedback?.notes) {
       $('#director-premise').value = `${sourceProject.premise}\n\n本版修改要求：${sourceProject.feedback.notes}`.slice(0, 8000);
@@ -1522,8 +1543,11 @@ function showDirectorStart(oneClick = false, sourceProject = null, edit = false)
 function updateDirectorModeSummary() {
   const seconds = Number($('#director-duration').value);
   const resolution = $('#director-resolution').value;
-  const estimatedShots = Math.ceil(seconds / 12);
+  const whiteboard = $('#director-production-mode').value === 'whiteboard';
+  const estimatedShots = Math.ceil(seconds / (whiteboard ? 35 : 12));
   const requireStoryConfirmation = $('#director-confirm-story').checked;
+  $('#director-resolution').options[0].textContent = whiteboard ? '标准 · 720×1280 / 1280×720' : '768P（视频渠道）';
+  $('#director-resolution').options[1].textContent = whiteboard ? '高清 · 1024×1792 / 1792×1024' : '2K（视频渠道）';
   const panel = $('#director-start-boundary');
   panel.classList.toggle('one-click', directorOneClickMode);
   panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
@@ -1534,9 +1558,29 @@ function updateDirectorModeSummary() {
   $('#director-start-submit').textContent = requireStoryConfirmation
     ? '保存故事并进入确认'
     : (directorOneClickMode ? `立即预演并准备约 ${estimatedShots} 个镜头` : '立即启动总导演文本预演');
-  panel.querySelector('span').textContent += '文本规划完成后，还会展示故事与分镜供你确认，再生成视频。';
+  panel.querySelector('span').textContent += whiteboard
+    ? '白板方式：每镜一幅图，描线、上色、旁白和字幕；生图与配音可能收费，本地合成不调用视频模型。分镜确认前可上传自有图片；失败不自动切换动态视频。'
+    : '动态视频方式：分镜确认后按视频渠道计费；不会自动改变制作方式。';
   if (editingDirectorDraft) $('#director-start-submit').textContent = '保存草案修改';
 }
+
+$('#storyboard-review-content').addEventListener('change', async event => {
+  const input = event.target.closest('[data-whiteboard-upload]');
+  if (!input || !input.files?.length || !activeDirectorProject) return;
+  const file = input.files[0];
+  if (file.size > 12 * 1024 * 1024) { notify('图片不能超过 12 MB'); return; }
+  const projectId = activeDirectorProject.id;
+  const data = new FormData(); data.append('file', file);
+  input.disabled = true;
+  try {
+    const response = await fetch(`/api/v1/director/projects/${projectId}/images/${input.dataset.whiteboardUpload}`, {method: 'PUT', body: data});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || '上传失败');
+    if (activeDirectorProject?.id === projectId) renderDirectorProject(result);
+    notify('图片已保存；这一镜不会再调用付费生图，请重新核对并确认分镜。');
+  } catch (error) { notify(error.message); }
+  finally { input.disabled = false; }
+});
 
 function videoStatusLabel(status) {
   return { awaiting_confirmation: '等待确认', queued: '排队中', processing: '生成中', completed: '已完成', failed: '生成失败' }[status] || status;
@@ -1812,6 +1856,7 @@ $('#continue-production').addEventListener('click', async () => {
       title: '确认故事并开始预演',
       premise: activeDirectorProject.premise,
       resolution: activeDirectorProject.resolution,
+      production_mode: activeDirectorProject.production_mode || 'video',
       estimatedShots,
     });
     if (!confirmed) {
@@ -1911,11 +1956,13 @@ $('#director-start-close').addEventListener('click', () => $('#director-start-di
 $('#director-start-cancel').addEventListener('click', () => $('#director-start-dialog').close());
 $('#director-duration').addEventListener('change', updateDirectorModeSummary);
 $('#director-resolution').addEventListener('change', updateDirectorModeSummary);
+$('#director-production-mode').addEventListener('change', updateDirectorModeSummary);
 $('#director-confirm-story').addEventListener('change', updateDirectorModeSummary);
 $('#director-start-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const seconds = Number($('#director-duration').value);
-  const estimatedShots = Math.ceil(seconds / 12);
+  const whiteboard = $('#director-production-mode').value === 'whiteboard';
+  const estimatedShots = Math.ceil(seconds / (whiteboard ? 35 : 12));
   const resolution = $('#director-resolution').value;
   const requireStoryConfirmation = $('#director-confirm-story').checked;
   if (!requireStoryConfirmation && directorOneClickMode) {
@@ -1935,6 +1982,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
         premise: $('#director-premise').value.trim(),
         target_seconds: Number($('#director-duration').value),
         aspect_ratio: $('#director-ratio').value,
+        production_mode: $('#director-production-mode').value,
         resolution,
         visual_style: $('#director-style').value.trim(),
         continuity_notes: $('#director-continuity-notes').value.trim(),
@@ -1952,7 +2000,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
     switchWorkspace('studio');
     notify(editingDirectorDraft ? '草案修改已保存。' : requireStoryConfirmation
       ? '故事草案已保存，尚未调用任何 Agent 或视频模型。请核对后点击“确认故事并开始预演”。'
-      : '总导演文本预演已启动；只有至少两轮复核且评分达到 90 分才会调用视频模型。');
+      : '总导演文本预演已启动；通过后仍需你核对分镜，再提交所选渠道的媒体任务。');
   } catch (error) {
     notify(error.message);
   } finally {

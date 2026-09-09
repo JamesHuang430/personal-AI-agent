@@ -33,6 +33,7 @@
         <button class="nav-item" data-page="channels" type="button"><span>⌁</span>文本模型渠道</button>
         <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
         <button class="nav-item" data-page="speech-channels" type="button"><span>◉</span>语音渠道</button>
+        <button class="nav-item" data-page="image-channels" type="button"><span>▧</span>图片渠道</button>
         <button class="nav-item" data-page="music-channels" type="button"><span>♫</span>音乐渠道</button>
         <button class="nav-item" data-page="request-logs" type="button"><span>≡</span>请求日志</button>
         <button class="nav-item" data-page="email-channel" type="button"><span>✉</span>邮件服务</button>
@@ -110,6 +111,21 @@
           <div id="video-channel-grid" class="channel-grid"></div>
         </section>
 
+        <section id="page-image-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">IMAGE PROVIDERS</p><h1>图片生成渠道</h1><p class="muted">白板产线专用；与语音、视频渠道独立配置，不自动共用密钥。</p></div></div>
+          <div class="security-banner"><span>▧</span><div><strong>MiniMax 生图 + 本地白板合成</strong><p>图片、语音 API 可能收费；本地渲染不调用视频模型。配置保存不会发起付费测试。上传自有图片可跳过生图。</p></div></div>
+          <form id="image-channel-form" class="panel editor-form channel-form">
+            <input id="image-channel-id" type="hidden">
+            <label>渠道名称<input id="image-channel-name" value="MiniMax Image" maxlength="100" required></label>
+            <label>Base URL<input id="image-channel-url" type="url" value="https://api.minimaxi.com" required></label>
+            <label>API Key<input id="image-channel-key" type="password" placeholder="独立配置生图权限 Key" required autocomplete="new-password"></label>
+            <label>图片模型<select id="image-channel-model"><option>image-01</option><option>image-01-live</option></select></label>
+            <label>QPS 上限<input id="image-channel-qps" type="number" min="1" max="20" value="1" required></label>
+            <label class="switch-label"><input id="image-channel-active" type="checkbox">启用此渠道</label>
+            <div class="form-actions"><button id="image-channel-save" class="primary" type="submit">新增图片渠道</button><button id="image-channel-cancel" class="ghost" type="button">重置表单</button></div>
+          </form>
+          <div id="image-channel-grid" class="channel-grid"></div>
+        </section>
         <section id="page-speech-channels" class="page hidden">
           <div class="page-heading"><div><p class="eyebrow purple">SPEECH PROVIDERS</p><h1>语音配音渠道</h1><p class="muted">为短剧生成对白、旁白和固定声线配音；H3 原生音轨可用时优先保留，仅在补配音时调用</p></div></div>
           <div class="security-banner"><span>◉</span><div><strong>MiniMax Speech / T2A</strong><p>语音同步生成并保存为可下载音频；Speech 用于配音，Music 只用于歌曲和背景音乐。</p></div></div>
@@ -190,6 +206,7 @@
     <section id="request-log-error-wrap" class="hidden"><h3>错误</h3><pre id="request-log-error" class="error-output"></pre></section>
   </dialog>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=0.7" defer></script>
+  <script src="/static/app.js?v=0.8" defer></script>
+  <script src="/static/image-channels.js?v=1" defer></script>
 </body>
 </html>

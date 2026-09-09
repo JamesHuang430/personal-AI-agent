@@ -49,6 +49,11 @@ from assistant_app.services.speech_gateway import (
     run_speech_job,
 )
 from assistant_app.services.video_gateway import create_video_job, run_video_job, video_job_payload
+from assistant_app.services.whiteboard import (
+    WHITEBOARD_INSTRUCTIONS,
+    run_whiteboard_media,
+    whiteboard_durations,
+)
 from assistant_app.services.work_queue import enqueue
 
 
@@ -325,6 +330,12 @@ def _extract_continuity_bible(content: str, project: DirectorProject) -> dict[st
 def _continuity_prompt(project: DirectorProject) -> str:
     bible = project.continuity_bible or _default_continuity_bible(project)
     return json.dumps(bible, ensure_ascii=False, separators=(",", ":"))[:6000]
+
+
+def _project_durations(project):
+    if getattr(project, "production_mode", "video") == "whiteboard":
+        return whiteboard_durations(project.target_seconds, project.one_click)
+    return _shot_durations(project.target_seconds) if project.one_click else ["4"]
 
 
 def _shot_durations(target_seconds: int) -> list[str]:
@@ -743,6 +754,9 @@ def shot_payload(shot: DirectorShot, job: VideoJob | None = None) -> dict[str, o
         "speech_text": shot.speech_text,
         "subtitle_text": shot.subtitle_text,
         "speech_job_id": str(shot.speech_job_id) if shot.speech_job_id else None,
+        "image_source": getattr(shot, "image_source", None),
+        "image_url": (f"/api/v1/director/projects/{shot.project_id}/shots/{shot.id}/image"
+                      if getattr(shot, "image_path", None) else None),
         "audio_source": media.get("audio_source"),
         "native_audio": media.get("audio_source") == "native_h3",
         "background_music": media.get("background_music"),
@@ -811,6 +825,7 @@ async def project_payload(
         "title": project.title,
         "premise": project.premise,
         "target_seconds": project.target_seconds,
+        "production_mode": getattr(project, "production_mode", "video") or "video",
         "aspect_ratio": project.aspect_ratio,
         "resolution": project.resolution or "768P",
         "visual_style": project.visual_style,
@@ -861,7 +876,10 @@ async def create_director_project(
     one_click: bool = False,
     story_confirmed: bool = False,
     use_memory: bool = True,
+    production_mode: str = "whiteboard",
 ) -> DirectorProject:
+    if production_mode not in {"whiteboard", "video"}:
+        raise ValueError("不支持的制作方式")
     personalization = await build_personalization(
         runtime,
         settings,
@@ -870,7 +888,8 @@ async def create_director_project(
         use_memory=use_memory,
     )
     visual_style = (
-        visual_style or personalization["preferences"].get("visual_style") or "电影感写实"
+        visual_style or personalization["preferences"].get("visual_style")
+        or ("白板手绘，白底线稿，少量平涂色" if production_mode == "whiteboard" else "电影感写实")
     )
     _channel_name, models = await list_available_models(runtime, settings)
     assignments = {item["agent"]: item for item in route_agent_models(models)}
@@ -881,6 +900,7 @@ async def create_director_project(
         raise ValueError(f"以下 Agent 暂无可用模型：{'、'.join(unavailable)}")
 
     project = DirectorProject(
+        production_mode=production_mode,
         id=uuid4(),
         user_id=user_id,
         title=_project_title(premise),
@@ -895,7 +915,9 @@ async def create_director_project(
         review_required=True,
         storyboard_approved=False,
         one_click=one_click,
-        planned_shots=len(_shot_durations(target_seconds)) if one_click else 1,
+        planned_shots=(len(whiteboard_durations(target_seconds, one_click))
+                       if production_mode == "whiteboard"
+                       else len(_shot_durations(target_seconds)) if one_click else 1),
         status="queued" if story_confirmed else "awaiting_confirmation",
         current_stage="director" if story_confirmed else "story_confirmation",
         progress=0,
@@ -941,6 +963,7 @@ def storyboard_hash(project, visual_data):
         "target_seconds": project.target_seconds,
         "one_click": project.one_click,
         "resolution": project.resolution,
+        "production_mode": getattr(project, "production_mode", "video") or "video",
         "aspect_ratio": project.aspect_ratio,
     }
     return hashlib.sha256(
@@ -1001,12 +1024,13 @@ async def update_director_draft(runtime, user_id, project_id, values):
             "target_seconds",
             "aspect_ratio",
             "resolution",
+            "production_mode",
         ):
             if key in values:
                 setattr(project, key, values[key])
         project.title = _project_title(project.premise)
         project.planned_shots = (
-            len(_shot_durations(project.target_seconds)) if project.one_click else 1
+            len(_project_durations(project))
         )
     return project
 
@@ -1093,6 +1117,7 @@ async def list_director_summaries(runtime, user_id: UUID) -> list[dict[str, obje
             "title": p.title,
             "status": p.status,
             "one_click": p.one_click,
+            "production_mode": p.production_mode,
             "progress": p.progress,
             "target_seconds": p.target_seconds,
             "aspect_ratio": p.aspect_ratio,
@@ -1431,7 +1456,7 @@ async def _execute_agent_run(
         "必须使用简体中文，并严格使用两个标题：【判断摘要】与【交付物】。"
     )
     marker = "【故事JSON】" if run.agent_key == "story" else "【视觉JSON】"
-    durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+    durations = _project_durations(project)
     if run.agent_key == "story":
         system_prompt += (
             "交付物末尾必须输出【故事JSON】，后接严格合法的 JSON 对象，至少包含："
@@ -1463,6 +1488,8 @@ async def _execute_agent_run(
             "中文对白长度不得超过该镜"
             "秒数乘以 4 个汉字。不得使用“同上”省略字段。"
         )
+    if getattr(project, "production_mode", "video") == "whiteboard":
+        system_prompt += WHITEBOARD_INSTRUCTIONS
     user_prompt = (
         f"项目：{project.title}\n故事创意：{project.premise}\n目标时长："
         f"{project.target_seconds} 秒\n画幅：{project.aspect_ratio}\n视觉风格："
@@ -1539,7 +1566,7 @@ async def _run_director_preflight(
     if existing.get("passed"):
         project.continuity_bible = dict(visual_run.result_data["continuity"])
         return existing
-    durations = _shot_durations(project.target_seconds) if project.one_click else ["4"]
+    durations = _project_durations(project)
     candidate = _validate_visual_data(dict(visual_run.result_data or {}), project, durations)
     story_data = dict(story_run.result_data or {})
     attempts: list[dict[str, object]] = []
@@ -1566,6 +1593,8 @@ async def _run_director_preflight(
         "removed_irrelevant、risks、revised_visual。revised_visual 必须是完整视觉 JSON，"
         "包含 continuity 和原数量 shots，不得只给修改片段。"
     )
+    if getattr(project, "production_mode", "video") == "whiteboard":
+        system_prompt += WHITEBOARD_INSTRUCTIONS
     for attempt in range(1, DIRECTOR_PREFLIGHT_MAX_ATTEMPTS + 1):
         await emit_activity(runtime, f"总导演预演 · 第 {attempt} 轮", "processing", kind="review")
         phase = "全面审查并重写" if attempt == 1 else "复核上一版修订并做最终收敛"
@@ -1745,8 +1774,12 @@ async def _run_director_project(
                 status="awaiting_storyboard",
                 current_stage="storyboard_review",
                 progress=38,
-                final_summary="故事与分镜已完成。请核对镜头、对白和创作偏好后确认生成；尚未提交视频任务。",
+                final_summary="故事与分镜已完成。请核对镜头、对白和创作偏好后确认生成；尚未提交生图、配音或视频任务。",
             )
+            return
+
+        if getattr(project, "production_mode", "video") == "whiteboard":
+            await run_whiteboard_media(runtime, settings, project, media_run, quality_run)
             return
 
         await _update_project(runtime, project_id, current_stage="media", progress=40)
@@ -1949,6 +1982,8 @@ async def prepare_director_remaster(
         )
         if project is None:
             raise DirectorProjectNotFoundError("导演项目不存在")
+        if project.production_mode == "whiteboard":
+            raise DirectorProjectNotRemasterableError("白板项目暂不支持此动态视频重配音入口")
         if project.status != "completed" or not project.final_video_path:
             raise DirectorProjectNotRemasterableError("只有已完成的一键成片可以重新配音")
         shots = list(

@@ -88,7 +88,10 @@ async def _build_quality_report(
                 duration = 0.0
             if not has_video or not has_audio:
                 issues.append("最终合片缺少视频轨或语音轨")
-            if abs(duration - project.target_seconds) > 1.5:
+            expected = (sum(float(shot.seconds) for shot in shots)
+                        if getattr(project, "production_mode", "video") == "whiteboard"
+                        else project.target_seconds)
+            if abs(duration - expected) > 1.5:
                 issues.append(f"最终合片时长异常：{duration:.2f}s")
             final_check = {
                 "video": has_video,

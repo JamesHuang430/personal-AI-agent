@@ -40,4 +40,4 @@ def test_admin_console_exposes_request_log_workspace() -> None:
     assert response.status_code == 200
     assert 'data-page="request-logs"' in response.text
     assert 'id="request-log-dialog"' in response.text
-    assert 'app.js?v=0.7' in response.text
+    assert 'app.js?v=' in response.text

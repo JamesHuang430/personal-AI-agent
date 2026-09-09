@@ -231,6 +231,21 @@ class SpeechChannel(Base):
     )
 
 
+class ImageChannel(Base):
+    __tablename__ = "image_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qps_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class EmailChannel(Base):
     __tablename__ = "email_channels"
 
@@ -302,6 +317,10 @@ class VideoJob(Base):
 
 
 class DirectorProject(Base):
+    # Legacy rows remain video; the creation service defaults new projects to whiteboard.
+    production_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="video", server_default=text("'video'")
+    )
     __tablename__ = "director_projects"
     __table_args__ = (
         CheckConstraint(
@@ -408,6 +427,12 @@ class DirectorAgentRun(Base):
 
 
 class DirectorShot(Base):
+    image_path: Mapped[str | None] = mapped_column(String(500))
+    image_source: Mapped[str | None] = mapped_column(String(20))
+    image_channel_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("image_channels.id", ondelete="RESTRICT")
+    )
+    image_submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __tablename__ = "director_shots"
     __table_args__ = (
         UniqueConstraint("project_id", "sequence", name="uq_director_project_shot"),

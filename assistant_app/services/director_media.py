@@ -82,19 +82,29 @@ async def _subtitle_filter(
     duration: float,
     start_seconds: float | None,
     end_seconds: float | None,
+    *,
+    project=None,
+    speech=None,
 ) -> str:
     await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
     subtitle_path = GENERATED_ROOT / f"director-shot-{shot.id}.srt"
     subtitle = re.sub(r"[\r\n]+", " ", shot.subtitle_text or shot.speech_text or "").strip()
     start = max(0.0, min(float(start_seconds or 0.0), max(0.0, duration - 0.5)))
     end = max(start + 0.5, min(float(end_seconds or duration - 0.05), duration - 0.05))
-    srt = f"1\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{subtitle}\n"
+    from assistant_app.services.director_audio import subtitle_style
+    from assistant_app.services.speech_timing import timed_cues
+    from assistant_app.services.whiteboard import annotation_srt
+
+    cues, _source = timed_cues(speech, round(duration * 1000)) if speech else ([], "estimated")
+    if not cues:
+        cues = [
+            {"id": 1, "startMs": round(start * 1000), "endMs": round(end * 1000), "text": subtitle}
+        ]
+    srt = annotation_srt({"cues": cues})
     await asyncio.to_thread(subtitle_path.write_text, srt, encoding="utf-8")
     return (
         f"subtitles=filename='{_subtitle_filter_path(subtitle_path)}':"
-        f"force_style='FontName=Noto Sans CJK SC,FontSize={DIRECTOR_SUBTITLE_FONT_SIZE},"
-        "PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=72'"
+        f"force_style='{subtitle_style(project)}'"
     )
 
 
@@ -105,6 +115,7 @@ async def _render_dialogue_shot(
     *,
     subtitle_start_seconds: float | None = None,
     subtitle_end_seconds: float | None = None,
+    project=None,
 ) -> str:
     video_source = await _video_source_path(video_job)
     video_available = video_source and await asyncio.to_thread(Path(video_source).is_file)
@@ -118,11 +129,19 @@ async def _render_dialogue_shot(
 
     rendered_path = GENERATED_ROOT / f"director-shot-{shot.id}.mp4"
     duration = float(shot.seconds)
+    from assistant_app.services.director_audio import audio_settings
+
+    if project is not None and audio_settings(project).voice_mode != "auto":
+        audio_info = await _probe_media(speech_job.storage_path)
+        if float((audio_info.get("format") or {}).get("duration") or 0) > duration + 0.1:
+            raise RuntimeError("所选配音超过镜头时长，已停止以避免截断台词；请调整语速或台词")
     subtitle_filter = await _subtitle_filter(
         shot,
         duration,
         subtitle_start_seconds,
         subtitle_end_seconds,
+        project=project,
+        speech=speech_job,
     )
     voice_chain = _dialogue_voice_filter(duration)
 
@@ -168,6 +187,7 @@ async def _render_native_audio_shot(
     *,
     subtitle_start_seconds: float | None = None,
     subtitle_end_seconds: float | None = None,
+    project=None,
 ) -> str:
     video_source = await _video_source_path(video_job)
     if not video_source or not await asyncio.to_thread(Path(video_source).is_file):
@@ -178,6 +198,7 @@ async def _render_native_audio_shot(
         duration,
         subtitle_start_seconds,
         subtitle_end_seconds,
+        project=project,
     )
     rendered_path = GENERATED_ROOT / f"director-shot-{shot.id}.mp4"
     await _run_media_command(
@@ -231,9 +252,11 @@ async def _concat_shots(project: DirectorProject, shots: list[DirectorShot]) -> 
             "-i",
             str(list_path),
             "-t",
-            str(sum(float(shot.seconds) for shot in shots)
+            str(
+                sum(float(shot.seconds) for shot in shots)
                 if getattr(project, "production_mode", "video") == "whiteboard"
-                else project.target_seconds),
+                else project.target_seconds
+            ),
             "-c",
             "copy",
             "-movflags",

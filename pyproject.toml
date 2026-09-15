@@ -43,7 +43,7 @@ dev = [
 include = ["assistant_app*"]
 
 [tool.setuptools.package-data]
-assistant_app = ["web/**/*.html", "web/**/*.css", "web/**/*.js"]
+assistant_app = ["web/**/*.html", "web/**/*.css", "web/**/*.js", "vendor/**/LICENSE", "vendor/**/NOTICE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -52,6 +52,7 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["assistant_app/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]

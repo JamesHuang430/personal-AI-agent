@@ -78,6 +78,270 @@ async def seed(runtime):
 
 
 @pytest.mark.asyncio
+async def test_director_sound_audition_is_owned_idempotent_and_reused(db, tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from assistant_app.api.routes import director_audio as routes
+    from assistant_app.db.models import DirectorAgentRun, DirectorProject, DirectorShot, SpeechJob
+    from assistant_app.services import director
+    from assistant_app.services.director_audio import AudioSettings, director_speech
+
+    runtime, _ = db
+    runtime.redis = SimpleNamespace(incr=AsyncMock(return_value=1), expire=AsyncMock())
+    user = await seed(runtime)
+    other = await seed(runtime)
+    project = DirectorProject(
+        id=uuid4(),
+        user_id=user.id,
+        title="声音测试",
+        premise="太阳出来了",
+        visual_style="白板",
+        production_mode="whiteboard",
+        target_seconds=4,
+        planned_shots=1,
+        status="awaiting_storyboard",
+        current_stage="storyboard_review",
+        review_required=True,
+    )
+    visual = DirectorAgentRun(
+        id=uuid4(),
+        project_id=project.id,
+        user_id=user.id,
+        agent_key="visual",
+        agent_name="visual",
+        sequence=1,
+        model_name="fixture",
+        status="completed",
+        result_data={"shots": [{"title": "太阳", "speech_text": "太阳出来了。"}], "continuity": {}},
+    )
+    async with runtime.sessions() as session, session.begin():
+        session.add(project)
+        await session.flush()
+        session.add(visual)
+    monkeypatch.setattr(director, "read_activity", AsyncMock(return_value=[]))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runtime=runtime)))
+    original = director.storyboard_hash(project, visual.result_data)
+    settings = AudioSettings(
+        voice_mode="edge", voice_id="edge:zh-CN-XiaoxiaoNeural", subtitle_style="panel"
+    )
+    body = routes.SoundUpdate(settings=settings, storyboard_hash=original)
+    with pytest.raises(HTTPException) as forbidden:
+        await routes.save_sound(project.id, body, request, other)
+    assert forbidden.value.status_code == 404
+    saved = await routes.save_sound(project.id, body, request, user)
+    assert saved["storyboard_hash"] != original
+    with pytest.raises(HTTPException) as stale:
+        await routes.save_sound(project.id, body, request, user)
+    assert stale.value.status_code == 409
+    payload = routes.AuditionRequest(storyboard_hash=saved["storyboard_hash"])
+    first = await routes.audition(project.id, 1, payload, request, user)
+    second = await routes.audition(project.id, 1, payload, request, user)
+    assert first["id"] == second["id"]
+    with pytest.raises(director.DirectorProjectNotApprovableError, match="试听"):
+        await director.approve_storyboard(runtime, user.id, project.id, saved["storyboard_hash"])
+    from uuid import UUID
+
+    job_id = UUID(first["id"])
+    async with runtime.sessions() as session, session.begin():
+        job = await session.get(SpeechJob, job_id)
+        assert job.channel_id is None
+        job.status = "completed"
+        job.storage_path = str(tmp_path / "audition.wav")
+        jobs = list((await session.scalars(select(SpeechJob))).all())
+        assert len(jobs) == 1
+        shot = DirectorShot(
+            id=uuid4(),
+            project_id=project.id,
+            user_id=user.id,
+            sequence=1,
+            title="太阳",
+            prompt="sun",
+            seconds="4",
+            speech_text="太阳出来了。",
+            status="pending",
+        )
+        session.add(shot)
+    # Returning to a previous voice/settings variant reuses its original paid identity.
+    different = settings.model_copy(update={"voice_id": "edge:zh-CN-YunxiNeural"})
+    changed = await routes.save_sound(
+        project.id,
+        routes.SoundUpdate(settings=different, storyboard_hash=saved["storyboard_hash"]),
+        request,
+        user,
+    )
+    alternate = await routes.audition(
+        project.id,
+        1,
+        routes.AuditionRequest(storyboard_hash=changed["storyboard_hash"]),
+        request,
+        user,
+    )
+    assert alternate["id"] != first["id"]
+    restored = await routes.save_sound(
+        project.id,
+        routes.SoundUpdate(settings=settings, storyboard_hash=changed["storyboard_hash"]),
+        request,
+        user,
+    )
+    again = await routes.audition(
+        project.id,
+        1,
+        routes.AuditionRequest(storyboard_hash=restored["storyboard_hash"]),
+        request,
+        user,
+    )
+    assert again["id"] == first["id"]
+    reused = await director_speech(runtime, project, shot, visual.result_data["shots"][0])
+    assert reused == job_id
+    with pytest.raises(HTTPException, match="配音已用于"):
+        await routes.save_sound(
+            project.id,
+            routes.SoundUpdate(settings=settings, storyboard_hash=saved["storyboard_hash"]),
+            request,
+            user,
+        )
+
+
+@pytest.mark.asyncio
+async def test_director_audio_migration_preserves_keyless_jobs(db):
+    runtime, engine = db
+    migration = importlib.import_module("migrations.versions.20260915_0021_director_audio")
+    async with engine.begin() as connection:
+
+        def migrate(c):
+            with Operations.context(MigrationContext.configure(c)):
+                migration.downgrade()
+                migration.upgrade()
+
+        await connection.run_sync(migrate)
+    user = await seed(runtime)
+    from assistant_app.db.models import SpeechJob
+
+    async with runtime.sessions() as session, session.begin():
+        session.add(
+            SpeechJob(
+                user_id=user.id,
+                channel_id=None,
+                speech_text="太阳",
+                voice_id="edge:test",
+                audio_format="mp3",
+                status="completed",
+            )
+        )
+    async with engine.begin() as connection:
+
+        def refuse(c):
+            with Operations.context(MigrationContext.configure(c)):
+                with pytest.raises(RuntimeError, match="不能无损回退"):
+                    migration.downgrade()
+
+        await connection.run_sync(refuse)
+        assert (await connection.execute(text("SELECT count(*) FROM speech_jobs"))).scalar() == 1
+
+
+@pytest.mark.asyncio
+async def test_director_music_real_mix_ducking_and_ownership(db, tmp_path):
+    import hashlib
+
+    import numpy as np
+
+    from assistant_app.db.models import MusicChannel, MusicJob
+    from assistant_app.services.director_audio import (
+        AudioSettings,
+        mix_project_music,
+        validate_audio_assets,
+    )
+    from assistant_app.services.director_media import _probe_media, _run_media_command
+
+    runtime, _ = db
+    user = await seed(runtime)
+    channel = MusicChannel(
+        id=uuid4(),
+        name="test",
+        base_url="https://invalid.test",
+        model_name="test",
+        encrypted_api_key="unused",
+    )
+    music_path = tmp_path / "music.wav"
+    original = tmp_path / "source.mp4"
+    await _run_media_command(
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", str(music_path)
+    )
+    await _run_media_command(
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=320x180:d=4",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=880:duration=4",
+        "-af",
+        "volume='if(between(t,1,2),2,0)':eval=frame",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        str(original),
+    )
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+    music = MusicJob(
+        id=uuid4(),
+        user_id=user.id,
+        channel_id=channel.id,
+        prompt="fixture",
+        audio_format="wav",
+        status="completed",
+        storage_path=str(music_path),
+    )
+    async with runtime.sessions() as session, session.begin():
+        session.add(channel)
+        await session.flush()
+        session.add(music)
+    config = AudioSettings(bgm_job_id=music.id, bgm_volume=0.4)
+    async with runtime.sessions() as session:
+        with pytest.raises(ValueError, match="所选音乐不可用"):
+            await validate_audio_assets(session, uuid4(), config)
+    project = SimpleNamespace(user_id=user.id, postproduction=config.model_dump(mode="json"))
+    waveforms = []
+    for ducking in (False, True):
+        project.postproduction["ducking"] = ducking
+        output = tmp_path / f"mixed-{ducking}.mp4"
+        await mix_project_music(runtime, project, original, output, 4)
+        info = await _probe_media(output)
+        assert {s["codec_type"] for s in info["streams"]} == {"audio", "video"}
+        assert abs(float(info["format"]["duration"]) - 4) < 0.2
+        pcm = tmp_path / f"{ducking}.f32"
+        await _run_media_command(
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            str(pcm),
+        )
+        waveforms.append(np.fromfile(pcm, dtype="float32"))
+
+    def music_amplitude(samples):
+        segment = samples[round(1.3 * 48000) : round(1.8 * 48000)]
+        t = np.arange(len(segment)) / 48000
+        return abs(np.sum(segment * np.exp(-2j * np.pi * 440 * t))) / len(segment)
+
+    assert music_amplitude(waveforms[1]) < music_amplitude(waveforms[0]) * 0.7
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == digest
+
+
+@pytest.mark.asyncio
 async def test_queue_claim_recovery_and_fencing_on_postgresql(db):
     runtime, _ = db
     user = await seed(runtime)
@@ -381,7 +645,8 @@ async def test_whiteboard_migration_preserves_existing_project_mode(db):
 
 
 @pytest.mark.asyncio
-async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path, monkeypatch):
+@pytest.mark.parametrize("edge", [False, True])
+async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path, monkeypatch, edge):
     import io
     import wave
     from unittest.mock import AsyncMock
@@ -405,6 +670,9 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
         id=uuid4(),
         user_id=user.id,
         title="白板测试",
+        postproduction={"voice_mode": "edge", "voice_id": "edge:zh-CN-XiaoxiaoNeural"}
+        if edge
+        else {},
         premise="介绍太阳与树木",
         visual_style="白板",
         production_mode="whiteboard",
@@ -480,10 +748,93 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
         async with runtime.sessions() as session, session.begin():
             speech = await session.get(SpeechJob, job_id)
             speech.status, speech.storage_path = "completed", str(path)
+            if edge:
+                assert speech.channel_id is None
+                speech.timing = {
+                    "source": "edge",
+                    "cues": [{"id": 1, "text": speech.speech_text, "startMs": 100, "endMs": 900}],
+                }
 
     monkeypatch.setattr(whiteboard, "run_speech_job", fake_speech)
     paid = AsyncMock(side_effect=AssertionError("No paid video calls allowed"))
     monkeypatch.setattr(director, "run_video_job", paid)
+    await whiteboard.run_whiteboard_media(runtime, None, project, runs[2], runs[3])
+    from assistant_app.services.whiteboard_annotations import annotation_digest
+
+    async with runtime.sessions() as session:
+        result = await session.get(DirectorProject, project.id)
+        shot = await session.scalar(
+            select(DirectorShot).where(DirectorShot.project_id == project.id)
+        )
+        assert result.status == "awaiting_storyboard"
+        assert result.current_stage == "whiteboard_annotation_review"
+        state = shot.continuity_snapshot["_whiteboard"]
+        assert not state["approved"]
+        assert state["annotation"]["subtitleAlignment"] == ("provider" if edge else "estimated")
+    payload = await director.project_payload(runtime, result)
+    with pytest.raises(director.DirectorProjectNotApprovableError, match="逐镜保存"):
+        await director.approve_storyboard(runtime, user.id, project.id, payload["storyboard_hash"])
+    annotation = state["annotation"]
+    annotation["elements"] = [
+        {
+            "id": "scene",
+            "label": "阳光与树木",
+            "sequence": 1,
+            "narrativeRole": "旁白讲解",
+            "cueIds": [1],
+            "region": {"x": 0, "y": 0, "width": 320, "height": 180},
+            "reveal": {"startMs": 100, "durationMs": 800, "protectedRegions": []},
+        }
+    ]
+    update = routes.WhiteboardAnnotationUpdate(
+        annotation=annotation, storyboard_hash=payload["storyboard_hash"]
+    )
+    with pytest.raises(HTTPException) as error:
+        await routes.save_whiteboard_annotation(
+            project.id, shot.id, update, request, SimpleNamespace(id=uuid4())
+        )
+    assert error.value.status_code == 404
+    saved = await routes.save_whiteboard_annotation(project.id, shot.id, update, request, user)
+    assert saved["storyboard_hash"] != payload["storyboard_hash"]
+    with pytest.raises(HTTPException) as error:
+        await routes.save_whiteboard_annotation(project.id, shot.id, update, request, user)
+    assert error.value.status_code == 409
+    assert saved["agents"][1]["result_data"]["whiteboard_annotations"]["1"] == annotation_digest(
+        annotation
+    )
+    runtime.redis = SimpleNamespace(
+        set=AsyncMock(return_value=True), eval=AsyncMock(return_value=1)
+    )
+    preview = await routes.create_whiteboard_preview(
+        project.id,
+        shot.id,
+        routes.WhiteboardPreviewInput(digest=annotation_digest(annotation)),
+        request,
+        user,
+    )
+    assert annotation_digest(annotation) in preview["url"]
+    response = await routes.get_whiteboard_preview(
+        project.id, shot.id, annotation_digest(annotation), request, user
+    )
+    assert response.media_type == "video/mp4"
+    with pytest.raises(HTTPException) as error:
+        await routes.get_whiteboard_preview(
+            project.id, shot.id, annotation_digest(annotation), request, SimpleNamespace(id=uuid4())
+        )
+    assert error.value.status_code == 404
+    runtime.redis.set.return_value = False
+    with pytest.raises(HTTPException) as error:
+        await routes.create_whiteboard_preview(
+            project.id,
+            shot.id,
+            routes.WhiteboardPreviewInput(digest=annotation_digest(annotation)),
+            request,
+            user,
+        )
+    assert error.value.status_code == 409
+    project = await director.approve_storyboard(
+        runtime, user.id, project.id, saved["storyboard_hash"]
+    )
     await whiteboard.run_whiteboard_media(runtime, None, project, runs[2], runs[3])
     async with runtime.sessions() as session:
         result = await session.get(DirectorProject, project.id)

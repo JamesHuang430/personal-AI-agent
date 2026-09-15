@@ -620,7 +620,7 @@ async def agent_text_completion(
     settings: Settings,
     model_name: str,
     system_prompt: str,
-    user_prompt: str,
+    user_prompt: str | list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Run one visible director-agent pass without exposing hidden chain of thought."""
 

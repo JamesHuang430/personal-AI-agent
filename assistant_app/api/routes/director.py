@@ -42,6 +42,7 @@ from assistant_app.services.director import (
     project_payload,
     update_director_draft,
 )
+from assistant_app.services.director_audio import AudioSettings
 from assistant_app.services.generated_files import GENERATED_ROOT
 from assistant_app.services.model_gateway import ModelChannelUnavailableError
 from assistant_app.services.speech_gateway import EDGE_FEMALE_VOICE_ID
@@ -59,6 +60,7 @@ async def whiteboard_readiness(request: Request, user: Annotated[User, Depends(c
     return {
         "image_configured": image is not None,
         "speech_configured": speech is not None,
+        "edge_available": True,
         "image_model": image.model_name if image else None,
         "note": "配置存在不代表权限或余额有效。生图和配音按各渠道计费，本地合成不调用视频模型。",
     }
@@ -121,6 +123,9 @@ async def upload_storyboard_image(
         except (ValueError, OSError) as exc:
             raise HTTPException(422, "图片无效，仅支持尺寸合理的 PNG、JPEG、WebP") from exc
         shot.image_path = str(path)
+        snapshot = dict(shot.continuity_snapshot or {})
+        snapshot.pop("_whiteboard", None)
+        shot.continuity_snapshot = snapshot
         shot.image_source = "uploaded"
         shot.status = "pending"
         shot.error_message = None
@@ -133,6 +138,221 @@ async def upload_storyboard_image(
         project.current_stage = "storyboard_review"
         project.error_message = None
     return await project_payload(request.app.state.runtime, project)
+
+
+class WhiteboardAnnotationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    annotation: dict
+    storyboard_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+async def annotation_target(session, user_id, project_id, shot_id):
+    project = await session.scalar(
+        select(DirectorProject)
+        .where(DirectorProject.id == project_id, DirectorProject.user_id == user_id)
+        .with_for_update()
+    )
+    if project is None:
+        raise HTTPException(404, "项目不存在")
+    shot = await session.scalar(
+        select(DirectorShot).where(
+            DirectorShot.id == shot_id,
+            DirectorShot.project_id == project_id,
+            DirectorShot.user_id == user_id,
+        )
+    )
+    if shot is None or project.production_mode != "whiteboard":
+        raise HTTPException(404, "白板镜头不存在")
+    if project.status not in {"awaiting_storyboard", "failed"} or shot.status == "completed":
+        raise HTTPException(409, "只能编辑等待确认或失败的未完成镜头")
+    if not shot.image_path or not (shot.continuity_snapshot or {}).get("_whiteboard"):
+        raise HTTPException(409, "请先确认分镜并准备图片和旁白")
+    return project, shot
+
+
+@router.put("/projects/{project_id}/shots/{shot_id}/annotation")
+async def save_whiteboard_annotation(
+    project_id: UUID,
+    shot_id: UUID,
+    payload: WhiteboardAnnotationUpdate,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+):
+    import re
+
+    from assistant_app.services.director import storyboard_hash
+    from assistant_app.services.whiteboard_annotations import annotation_digest, validate_annotation
+
+    async with request.app.state.runtime.sessions() as session, session.begin():
+        project, shot = await annotation_target(session, user.id, project_id, shot_id)
+        visual = await session.scalar(
+            select(DirectorAgentRun).where(
+                DirectorAgentRun.project_id == project_id, DirectorAgentRun.agent_key == "visual"
+            )
+        )
+        if storyboard_hash(project, visual.result_data or {}) != payload.storyboard_hash:
+            raise HTTPException(409, "分镜已变化，请刷新后再保存，避免覆盖其他修改")
+        try:
+            data = await asyncio.to_thread(validate_annotation, payload.annotation, shot.image_path)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        state = dict(shot.continuity_snapshot["_whiteboard"])
+        if data["cues"] == state["annotation"]["cues"]:
+            data["subtitleAlignment"] = state["annotation"]["subtitleAlignment"]
+        elif data["subtitleAlignment"] != "srt":
+            data["subtitleAlignment"] = "manual"
+        if data["sceneDurationMs"] != state["annotation"]["sceneDurationMs"]:
+            raise HTTPException(422, "不能改变已准备好的场景时长")
+
+        def clean(value):
+            return re.sub(r"\s+", "", value)
+
+        if clean("".join(c["text"] for c in data["cues"])) != clean(shot.speech_text):
+            raise HTTPException(422, "字幕必须与已生成的旁白一致；可修改时间，不可改写台词")
+        if any(c["endMs"] > state["audioDurationMs"] + 100 for c in data["cues"]):
+            raise HTTPException(422, "字幕不能超出旁白音频时长")
+        shot.continuity_snapshot = dict(shot.continuity_snapshot) | {
+            "_whiteboard": state | {"annotation": data, "saved": True, "approved": False}
+        }
+        result = dict(visual.result_data or {})
+        revisions = dict(result.get("whiteboard_annotations") or {})
+        revisions[str(shot.sequence)] = annotation_digest(data)
+        visual.result_data = result | {"whiteboard_annotations": revisions}
+        project.storyboard_approved = False
+        project.status = "awaiting_storyboard"
+        project.current_stage = "whiteboard_annotation_review"
+        project.error_message = None
+    return await project_payload(request.app.state.runtime, project)
+
+
+class WhiteboardSrtInput(BaseModel):
+    text: str = Field(min_length=1, max_length=64000)
+
+
+@router.post("/whiteboard/parse-srt")
+async def parse_whiteboard_srt(
+    payload: WhiteboardSrtInput,
+    user: Annotated[User, Depends(current_user)],
+):
+    from assistant_app.services.whiteboard_annotations import parse_srt
+
+    try:
+        return {"cues": parse_srt(payload.text)}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+class WhiteboardPreviewInput(BaseModel):
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@router.post("/projects/{project_id}/shots/{shot_id}/annotation-preview")
+async def create_whiteboard_preview(
+    project_id: UUID,
+    shot_id: UUID,
+    payload: WhiteboardPreviewInput,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+):
+    import json
+    import sys
+
+    from assistant_app.services.director_media import _run_media_command
+    from assistant_app.services.whiteboard_annotations import annotation_digest, validate_annotation
+
+    runtime = request.app.state.runtime
+    async with runtime.sessions() as session:
+        _project, shot = await annotation_target(session, user.id, project_id, shot_id)
+        state = shot.continuity_snapshot["_whiteboard"]
+        if not state.get("saved") or annotation_digest(state["annotation"]) != payload.digest:
+            raise HTTPException(409, "请先保存当前标注再预览")
+        data = await asyncio.to_thread(validate_annotation, state["annotation"], shot.image_path)
+    output = GENERATED_ROOT / f"wb-preview-{shot.id}-{payload.digest}.mp4"
+    key = f"whiteboard:preview:{user.id}"
+    from uuid import uuid4
+
+    lease = str(uuid4())
+    if not await runtime.redis.set(key, lease, nx=True, ex=1250):
+        raise HTTPException(409, "已有白板预览正在渲染，请稍候")
+    try:
+        if not await asyncio.to_thread(output.is_file):
+            annotation_file = output.with_suffix(".json")
+            await asyncio.to_thread(annotation_file.write_text, json.dumps(data), encoding="utf-8")
+            raw = output.with_suffix(".raw.mp4")
+            # Match the production aspect ratio; do not infer it from the input artwork.
+            width, height = (360, 640) if _project.aspect_ratio == "9:16" else (640, 360)
+            temporary = output.with_suffix(".pending.mp4")
+            try:
+                await _run_media_command(
+                    sys.executable,
+                    "-m",
+                    "assistant_app.services.whiteboard_stream",
+                    shot.image_path,
+                    str(annotation_file),
+                    str(raw),
+                    str(width),
+                    str(height),
+                )
+                await _run_media_command(
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(raw),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    str(temporary),
+                )
+                await asyncio.to_thread(temporary.replace, output)
+            finally:
+                await asyncio.to_thread(raw.unlink, missing_ok=True)
+                await asyncio.to_thread(temporary.unlink, missing_ok=True)
+    finally:
+        await runtime.redis.eval(
+            "if redis.call('get',KEYS[1]) == ARGV[1] then "
+            "return redis.call('del',KEYS[1]) else return 0 end",
+            1,
+            key,
+            lease,
+        )
+    return {
+        "url": (
+            f"/api/v1/director/projects/{project_id}/shots/{shot_id}"
+            f"/annotation-preview/{payload.digest}"
+        )
+    }
+
+
+@router.get("/projects/{project_id}/shots/{shot_id}/annotation-preview/{digest}")
+async def get_whiteboard_preview(
+    project_id: UUID,
+    shot_id: UUID,
+    digest: str,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+):
+    import re
+
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise HTTPException(404, "预览不存在")
+    async with request.app.state.runtime.sessions() as session:
+        shot = await session.scalar(
+            select(DirectorShot).where(
+                DirectorShot.id == shot_id,
+                DirectorShot.project_id == project_id,
+                DirectorShot.user_id == user.id,
+            )
+        )
+    path = GENERATED_ROOT / f"wb-preview-{shot_id}-{digest}.mp4"
+    if shot is None or not await asyncio.to_thread(path.is_file):
+        raise HTTPException(404, "预览不存在")
+    return FileResponse(
+        path, media_type="video/mp4", headers={"Cache-Control": "private, no-store"}
+    )
 
 
 @router.get("/projects/{project_id}/shots/{shot_id}/image", response_class=FileResponse)
@@ -162,6 +382,7 @@ async def preview_shot_image(
 
 
 class DirectorProjectCreatePayload(BaseModel):
+    postproduction: AudioSettings = Field(default_factory=AudioSettings)
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     premise: str = Field(min_length=4, max_length=8_000)
     target_seconds: Literal[4, 30, 60, 180, 300] = 60
@@ -285,6 +506,7 @@ async def start_director_project(
             story_confirmed=payload.story_confirmed,
             use_memory=payload.use_memory,
             production_mode=payload.production_mode,
+            postproduction=payload.postproduction.model_dump(mode="json"),
         )
     except ModelChannelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import logging
 import time
 from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -126,7 +130,8 @@ async def create_speech_job(
         channel = await session.scalar(
             select(SpeechChannel).where(SpeechChannel.is_active.is_(True))
         )
-    if channel is None:
+    edge = _edge_voice_name(voice_id or "")
+    if channel is None and not edge:
         raise SpeechChannelUnavailableError("运营后台尚未启用语音配音渠道")
 
     normalized_role = voice_role if voice_role in SPEECH_VOICE_ROLES else None
@@ -134,7 +139,7 @@ async def create_speech_job(
     job = SpeechJob(
         id=uuid4(),
         user_id=user_id,
-        channel_id=channel.id,
+        channel_id=channel.id if channel and not edge else None,
         speech_text=speech_text[:10_000],
         voice_id=(voice_id or channel.default_voice_id)[:200],
         speaker=(speaker or "")[:100] or None,
@@ -142,7 +147,7 @@ async def create_speech_job(
         emotion=normalized_emotion,
         speed=max(0.5, min(float(speed), 2.0)),
         status="queued",
-        audio_format=channel.default_format,
+        audio_format=channel.default_format if channel and not edge else "mp3",
     )
     async with runtime.sessions() as session, session.begin():
         session.add(job)
@@ -309,11 +314,31 @@ async def _save_edge_speech(
     rate: str,
     pitch: str,
     storage_path: str,
-) -> None:
+) -> dict:
     try:
         import edge_tts
 
-        await edge_tts.Communicate(text, voice_name, rate=rate, pitch=pitch).save(storage_path)
+        records, audio = [], bytearray()
+        async with asyncio.timeout(180):
+            async for chunk in edge_tts.Communicate(
+                text, voice_name, rate=rate, pitch=pitch, boundary="WordBoundary"
+            ).stream():
+                if chunk["type"] == "audio":
+                    audio.extend(chunk["data"])
+                    if len(audio) > 32 * 1024 * 1024:
+                        raise SpeechProviderError("Edge 配音超过 32 MB")
+                elif chunk["type"] in {"WordBoundary", "SentenceBoundary"}:
+                    records.append(
+                        {
+                            "text": chunk["text"],
+                            "startMs": round(chunk["offset"] / 10000),
+                            "endMs": round((chunk["offset"] + chunk["duration"]) / 10000),
+                        }
+                    )
+        if not audio:
+            raise SpeechProviderError("Edge 没有返回音频")
+        await asyncio.to_thread(Path(storage_path).write_bytes, audio)
+        return {"source": "edge", "cues": records}
     except Exception as exc:
         raise SpeechProviderError(f"备用 Edge TTS 女声生成失败：{type(exc).__name__}") from exc
 
@@ -348,14 +373,21 @@ async def _run_edge_speech(
     await asyncio.to_thread(GENERATED_ROOT.mkdir, parents=True, exist_ok=True)
     storage_path = GENERATED_ROOT / f"speech-{job.id}.mp3"
     rate, pitch = _edge_performance(job.speed, job.emotion)
-    await _save_edge_speech(job.speech_text, voice_name, rate, pitch, str(storage_path))
+    raw_timing = await _save_edge_speech(
+        job.speech_text, voice_name, rate, pitch, str(storage_path)
+    )
+    duration = await _audio_duration_ms(str(storage_path))
+    from assistant_app.services.speech_timing import match_cues
+
+    cues = match_cues(job.speech_text, (raw_timing or {}).get("cues"), duration)
     await _update_job(
         runtime,
         job.id,
         status="completed",
         audio_format="mp3",
         storage_path=str(storage_path),
-        duration_ms=await _audio_duration_ms(str(storage_path)),
+        duration_ms=duration,
+        timing={"source": "edge" if cues else "estimated", "cues": cues},
         error_message=None,
     )
 
@@ -365,8 +397,9 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
         job = await session.get(SpeechJob, job_id)
         if job is None or job.status in {"completed", "awaiting_confirmation"}:
             return
-        channel = await session.get(SpeechChannel, job.channel_id)
-    if channel is None:
+        channel = await session.get(SpeechChannel, job.channel_id) if job.channel_id else None
+    edge_voice = _edge_voice_name(job.voice_id)
+    if channel is None and not edge_voice:
         await _fail_job(runtime, job_id, "语音渠道已不存在")
         return
 
@@ -377,7 +410,14 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
         return
 
     try:
-        await _enforce_speech_qps(runtime, channel)
+        if edge_voice:
+            key = f"speech:edge:{job.user_id}:{int(time.time())}"
+            count = await runtime.redis.incr(key)
+            await runtime.redis.expire(key, 2)
+            if count > 2:
+                raise SpeechRateLimitError("Edge 配音请求过多，请稍后再试")
+        else:
+            await _enforce_speech_qps(runtime, channel)
         await _update_job(
             runtime, job_id, status="processing", submission_started_at=datetime.now(UTC)
         )
@@ -423,6 +463,10 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
                 },
                 "output_format": "hex",
             }
+            if channel.model_name.startswith(
+                ("speech-2.8", "speech-2.6", "speech-02", "speech-01")
+            ):
+                payload["subtitle_enable"] = True
             await _update_job(runtime, job_id, voice_id=selected_voice_id)
             result, used_voice_id = await _request_speech_with_fallback(
                 client, channel, headers, payload, selected_voice_id
@@ -449,6 +493,12 @@ async def run_speech_job(runtime: RuntimeDependencies, settings: Settings, job_i
             duration_ms=int(duration_ms) if duration_ms is not None else None,
             error_message=None,
         )
+        # Subtitle failure must never turn a successfully paid audio job into a retry.
+        timing = await _minimax_timing(result, job.speech_text, int(duration_ms or 0))
+        try:
+            await _update_job(runtime, job_id, timing=timing)
+        except Exception:
+            logging.getLogger(__name__).warning("speech_timing_save_failed")
     except Exception as exc:  # background work must persist a safe failure state
         detail = str(exc)[:420] if isinstance(exc, SpeechProviderError) else type(exc).__name__
         await _fail_job(runtime, job_id, f"语音生成失败（{detail}）")
@@ -480,9 +530,50 @@ def speech_job_payload(job: SpeechJob) -> dict[str, object]:
         "status": job.status,
         "audio_format": job.audio_format,
         "duration_ms": job.duration_ms,
+        "subtitle_timing": (getattr(job, "timing", None) or {}).get("source", "estimated"),
         "error_message": job.error_message if job.status == "failed" else None,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "download_url": (
             f"/api/v1/speech/{job.id}/download" if job.status == "completed" else None
         ),
     }
+
+
+async def _minimax_timing(result, text, duration_ms):
+    """Only download provider-owned HTTPS subtitle JSON; never forward credentials."""
+    from assistant_app.services.speech_timing import match_cues
+
+    fallback = {"source": "estimated", "cues": []}
+    try:
+        url = str((result.get("data") or {}).get("subtitle_file") or "")
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or not any(
+                host == d or host.endswith("." + d)
+                for d in ("minimax.io", "minimaxi.com", "minimax.chat")
+            )
+        ):
+            return fallback
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 1_000_000:
+                        return fallback
+        records = json.loads(content)
+        if not isinstance(records, list) or len(records) > 10000:
+            return fallback
+        converted = [
+            {"text": r["text"], "startMs": r["time_begin"], "endMs": r["time_end"]} for r in records
+        ]
+        cues = match_cues(text, converted, duration_ms)
+        return {"source": "minimax" if cues else "estimated", "cues": cues}
+    except Exception:
+        return fallback

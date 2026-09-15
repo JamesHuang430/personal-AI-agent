@@ -9,6 +9,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 async function setup() {
   const dom = new JSDOM(html, {url: 'http://localhost/', runScripts: 'outside-only'});
   const w = dom.window;
+  w.structuredClone = structuredClone;
+  w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   w.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
   const calls = [];
@@ -46,6 +48,48 @@ test('studio is the default, preferences are editable and legacy upsells are rem
   } finally {dom.window.close();}
 });
 
+test('director sound panel submits explicit settings and audition only after click', async () => {
+  const {w,dom,calls,project}=await setup();
+  try {
+    project.production_mode='whiteboard';
+    const fetch=w.fetch;
+    w.fetch=async (url, options={}) => {
+      if (url.endsWith('/director/audio-options')) return {ok:true,status:200,json:async()=>({voices:[
+        {id:'edge:zh-CN-XiaoxiaoNeural',mode:'edge',name:'晓晓'},
+        {id:'fixture-minimax',mode:'minimax',name:'MiniMax'}]})};
+      if (url.endsWith('/sound')) {
+        const sent=JSON.parse(options.body); project.postproduction=sent.settings;
+        project.storyboard_hash='b'.repeat(64); calls.push({url,options});
+        return {ok:true,status:200,json:async()=>project};
+      }
+      if (url.includes('/auditions/')) {
+        calls.push({url,options}); return {ok:true,status:202,json:async()=>({id:'speech-1',
+          status:'completed',voice_id:'edge:zh-CN-XiaoxiaoNeural',speed:1.1,duration_ms:2400,
+          subtitle_timing:'edge',download_url:'/api/v1/speech/speech-1/download'})};
+      }
+      return fetch(url,options);
+    };
+    await w.openDirectorSound(project);
+    const dialog=w.document.querySelector('#director-sound-editor'), form=dialog.querySelector('form');
+    const preview=dialog.querySelector('[data-audition-start]');
+    assert.equal(preview.disabled,true);
+    assert.equal(calls.some(c=>c.options.method==='POST'),false);
+    form.elements.voice.value='0'; form.elements.voice.dispatchEvent(new w.Event('change'));
+    form.elements.speed.value='1.1'; form.elements.style.value='panel';
+    assert.equal(preview.disabled,false); preview.click(); await tick(); await tick();
+    const saved=calls.find(c=>c.url.endsWith('/sound'));
+    assert.equal(JSON.parse(saved.options.body).settings.voice_mode,'edge');
+    assert.equal(JSON.parse(saved.options.body).settings.subtitle_style,'panel');
+    const audition=calls.find(c=>c.url.includes('/auditions/'));
+    assert.equal(JSON.parse(audition.options.body).storyboard_hash,'b'.repeat(64));
+    assert.match(dialog.querySelector('[data-audition-status]').textContent,/渠道时间戳/);
+    assert.equal(dialog.querySelector('[data-audition-audio]').hidden,false);
+    project.current_stage='whiteboard_annotation_review';
+    await w.openDirectorSound(project);
+    assert.equal(w.document.querySelector('[data-sound-save]').disabled,true);
+  } finally {dom.window.close();}
+});
+
 test('new projects default to whiteboard and old projects preserve their video mode', async () => {
   const {w,dom,calls,project}=await setup();
   try {
@@ -76,6 +120,33 @@ test('storyboard approval submits the displayed digest and escapes creative memo
     w.document.querySelector('#approve-storyboard-btn').click(); await tick();
     const sent=calls.find(call=>call.url.endsWith('/approve-storyboard'));
     assert.equal(JSON.parse(sent.options.body).storyboard_hash,project.storyboard_hash);
+  } finally {dom.window.close();}
+});
+
+test('whiteboard annotation editor saves source-bound fields and protects unsaved edits', async () => {
+  const {w,dom,calls,project}=await setup();
+  try {
+    project.production_mode='whiteboard';project.current_stage='whiteboard_annotation_review';
+    const annotation={version:2,canvas:{width:320,height:180},imageSha256:'a'.repeat(64),sceneDurationMs:3000,
+      subtitleAlignment:'estimated',inkPath:'grid',cues:[{id:1,startMs:0,endMs:2000,text:'好久不见'}],
+      elements:[{id:'sun',label:'太阳<script>bad()</script>',sequence:1,narrativeRole:'开场',cueIds:[1],
+        region:{x:10,y:10,width:50,height:50},reveal:{startMs:100,durationMs:1000,protectedRegions:[]}}]};
+    project.shots=[{id:'shot1',sequence:1,status:'pending',image_url:'/safe.png',whiteboard:{annotation,note:'核对'}}];
+    w.renderDirectorProject(project);
+    assert.match(w.document.querySelector('#approve-storyboard-btn').textContent,/确认全部分区/);
+    w.document.querySelector('[data-whiteboard-editor]').click();
+    const editor=w.document.querySelector('#whiteboard-editor');
+    assert.equal(editor.querySelector('script'),null);
+    assert.equal(editor.querySelectorAll('svg rect').length,1);
+    // Polling must not destroy the user's working edit.
+    w.renderDirectorProject({...project,progress:55});
+    assert.equal(w.document.querySelector('#whiteboard-editor'),editor);
+    editor.querySelector('[data-wb-save]').click();await tick();
+    const request=calls.find(call=>call.url.endsWith('/shots/shot1/annotation'));
+    const payload=JSON.parse(request.options.body);
+    assert.equal(payload.annotation.imageSha256,'a'.repeat(64));
+    assert.equal(payload.annotation.elements[0].cueIds[0],1);
+    assert.equal(payload.storyboard_hash,project.storyboard_hash);
   } finally {dom.window.close();}
 });
 

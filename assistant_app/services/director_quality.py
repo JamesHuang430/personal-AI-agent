@@ -70,7 +70,7 @@ async def _build_quality_report(
         )
 
     final_check: dict[str, object] | None = None
-    if project.one_click:
+    if project.one_click or final_path:
         if not final_path or not await asyncio.to_thread(Path(final_path).is_file):
             issues.append("最终合片文件不存在")
         else:
@@ -88,9 +88,12 @@ async def _build_quality_report(
                 duration = 0.0
             if not has_video or not has_audio:
                 issues.append("最终合片缺少视频轨或语音轨")
-            expected = (sum(float(shot.seconds) for shot in shots)
-                        if getattr(project, "production_mode", "video") == "whiteboard"
-                        else project.target_seconds)
+            expected = (
+                sum(float(shot.seconds) for shot in shots)
+                if not project.one_click
+                or getattr(project, "production_mode", "video") == "whiteboard"
+                else project.target_seconds
+            )
             if abs(duration - expected) > 1.5:
                 issues.append(f"最终合片时长异常：{duration:.2f}s")
             final_check = {

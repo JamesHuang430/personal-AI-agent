@@ -755,6 +755,7 @@ def shot_payload(shot: DirectorShot, job: VideoJob | None = None) -> dict[str, o
         "subtitle_text": shot.subtitle_text,
         "speech_job_id": str(shot.speech_job_id) if shot.speech_job_id else None,
         "image_source": getattr(shot, "image_source", None),
+        "whiteboard": (shot.continuity_snapshot or {}).get("_whiteboard"),
         "image_url": (f"/api/v1/director/projects/{shot.project_id}/shots/{shot.id}/image"
                       if getattr(shot, "image_path", None) else None),
         "audio_source": media.get("audio_source"),
@@ -816,11 +817,21 @@ async def project_payload(
                 )
             ).all()
         }
+        from assistant_app.services.speech_gateway import speech_job_payload
+        auditions = {}
+        for sequence, entry in ((getattr(project, "postproduction", None) or {}).get(
+            "_speech_previews") or {}).items():
+            speech = await session.get(SpeechJob, UUID(entry["job_id"]))
+            if speech and speech.user_id == project.user_id:
+                auditions[sequence] = speech_job_payload(speech)
     visual_run = next((run for run in runs if run.agent_key == "visual"), None)
     visual_data = dict(visual_run.result_data or {}) if visual_run else {}
     director_preflight = dict(visual_data.get("director_preflight") or {})
     events = await read_activity(runtime, f"director:{project.id}")
+    from assistant_app.services.director_audio import audio_settings
     return {
+        "postproduction": audio_settings(project).model_dump(mode="json"),
+        "auditions": auditions,
         "id": str(project.id),
         "title": project.title,
         "premise": project.premise,
@@ -877,9 +888,15 @@ async def create_director_project(
     story_confirmed: bool = False,
     use_memory: bool = True,
     production_mode: str = "whiteboard",
+    postproduction: dict | None = None,
 ) -> DirectorProject:
     if production_mode not in {"whiteboard", "video"}:
         raise ValueError("不支持的制作方式")
+    from assistant_app.services.director_audio import AudioSettings, validate_audio_assets
+    sound = AudioSettings.model_validate(postproduction or {})
+    if postproduction:
+        async with runtime.sessions() as session:
+            await validate_audio_assets(session, user_id, sound)
     personalization = await build_personalization(
         runtime,
         settings,
@@ -900,6 +917,7 @@ async def create_director_project(
         raise ValueError(f"以下 Agent 暂无可用模型：{'、'.join(unavailable)}")
 
     project = DirectorProject(
+        postproduction=sound.model_dump(mode="json"),
         production_mode=production_mode,
         id=uuid4(),
         user_id=user_id,
@@ -954,7 +972,9 @@ async def create_director_project(
 
 
 def storyboard_hash(project, visual_data):
+    from assistant_app.services.director_audio import audio_settings
     payload = {
+        "postproduction": audio_settings(project).model_dump(mode="json"),
         "project": str(project.id),
         "visual": visual_data,
         "premise": project.premise,
@@ -995,6 +1015,57 @@ async def approve_storyboard(runtime, user_id, project_id, expected_hash):
             return project
         if project.status != "awaiting_storyboard":
             raise DirectorProjectNotApprovableError("项目尚未进入分镜确认阶段")
+        from assistant_app.services.director_audio import audio_settings, validate_audio_assets
+        try:
+            await validate_audio_assets(session, user_id, audio_settings(project))
+        except ValueError as exc:
+            raise DirectorProjectNotApprovableError(str(exc)) from exc
+        audition_ids = [UUID(p["job_id"]) for p in
+                        ((project.postproduction or {}).get("_speech_previews") or {}).values()]
+        if audition_ids and await session.scalar(select(SpeechJob.id).where(
+            SpeechJob.id.in_(audition_ids), SpeechJob.status.in_(["queued", "processing"])
+        )):
+            raise DirectorProjectNotApprovableError("试听仍在生成，请完成后再确认制作")
+        for sequence, entry in (
+            (project.postproduction or {}).get("_speech_previews") or {}
+        ).items():
+            audition = await session.get(SpeechJob, UUID(entry["job_id"]))
+            if audition and audition.status == "failed":
+                raise DirectorProjectNotApprovableError(
+                    "试听失败，请核对失败原因后新建一版，避免重复付费"
+                )
+            durations = _project_durations(project)
+            if (audition and audition.duration_ms and project.production_mode == "video"
+                    and int(sequence) <= len(durations)
+                    and audition.duration_ms > float(durations[int(sequence)-1]) * 1000 + 100):
+                raise DirectorProjectNotApprovableError(
+                    "试听超过镜头时长，请提高语速或缩短台词后重新核对"
+                )
+        if (project.production_mode == "whiteboard"
+                and project.current_stage == "whiteboard_annotation_review"):
+            from assistant_app.services.whiteboard_annotations import validate_annotation
+
+            shots = list((await session.scalars(select(DirectorShot).where(
+                DirectorShot.project_id == project.id
+            ))).all())
+            if len(shots) != project.planned_shots:
+                raise DirectorProjectNotApprovableError("白板素材尚未准备齐全")
+            for shot in shots:
+                if shot.status == "completed":
+                    continue
+                state = dict((shot.continuity_snapshot or {}).get("_whiteboard") or {})
+                if not state.get("saved"):
+                    raise DirectorProjectNotApprovableError("请先逐镜保存并核对分区标注")
+                try:
+                    await asyncio.to_thread(
+                        validate_annotation, state["annotation"], shot.image_path
+                    )
+                except (ValueError, OSError) as exc:
+                    raise DirectorProjectNotApprovableError(
+                        "图片或分区标注已失效，请重新核对"
+                    ) from exc
+                shot.continuity_snapshot = dict(shot.continuity_snapshot or {}) | {
+                    "_whiteboard": state | {"approved": True}}
         project.storyboard_approved = True
         project.status = "queued"
         project.current_stage = "media"
@@ -1353,7 +1424,8 @@ async def _create_and_run_shot(
         and has_native_audio
     )
     completed_speech: SpeechJob | None = None
-    if native_h3:
+    from assistant_app.services.director_audio import audio_settings, director_speech
+    if native_h3 and audio_settings(project).voice_mode == "auto":
         await emit_activity(runtime, f"第 {sequence} 镜 · 原生音轨与字幕合成", "processing",
                             kind="tool", detail="保留原生音轨，烧录字幕")
         rendered_path = await _render_native_audio_shot(
@@ -1361,27 +1433,18 @@ async def _create_and_run_shot(
             completed_job,
             subtitle_start_seconds=dialogue_start,
             subtitle_end_seconds=dialogue_end,
+            project=project,
         )
         audio_source = "native_h3"
     else:
-        locked_voice_id = _voice_id_for_spec(spec, continuity)
         async with runtime.sessions() as session:
             speech_job = (
                 await session.get(SpeechJob, shot.speech_job_id) if shot.speech_job_id else None
             )
         if speech_job is None:
-            speech_job = await create_speech_job(
-                runtime,
-                project.user_id,
-                shot.speech_text or "",
-                locked_voice_id,
-                float(spec.get("speech_speed") or 1.0),
-                speaker=shot.speaker,
-                voice_role=None if locked_voice_id else _voice_role_for_spec(spec, continuity),
-                emotion=str(spec.get("emotion") or "calm"),
-                schedule=False,
-            )
-            await _update_shot(runtime, shot.id, speech_job_id=speech_job.id)
+            speech_id = await director_speech(runtime, project, shot, spec)
+            async with runtime.sessions() as session:
+                speech_job = await session.get(SpeechJob, speech_id)
         await emit_activity(runtime, f"第 {sequence} 镜 · 语音生成", "processing", kind="tool",
                             detail=f"语音任务 {speech_job.id}")
         await run_speech_job(runtime, settings, speech_job.id)
@@ -1402,6 +1465,7 @@ async def _create_and_run_shot(
             completed_speech,
             subtitle_start_seconds=dialogue_start,
             subtitle_end_seconds=dialogue_end,
+            project=project,
         )
         audio_source = "external_tts_fallback"
     await emit_activity(runtime, f"第 {sequence} 镜 · 声画合成完成", kind="tool")
@@ -1410,6 +1474,15 @@ async def _create_and_run_shot(
         "audio_source": audio_source,
         "native_audio_detected": has_native_audio,
     }
+    from assistant_app.services.speech_timing import timed_cues
+    cues, timing_source = (
+        timed_cues(completed_speech, round(float(seconds) * 1000))
+        if completed_speech else ([], "estimated")
+    )
+    media_snapshot["_media"]["subtitle_alignment"] = timing_source
+    if cues:
+        media_snapshot["_media"].update(subtitle_start_seconds=cues[0]["startMs"] / 1000,
+                                         subtitle_end_seconds=cues[-1]["endMs"] / 1000)
     async with runtime.sessions() as session, session.begin():
         stored_job = await session.get(VideoJob, completed_job.id, with_for_update=True)
         if stored_job is not None:
@@ -1858,6 +1931,15 @@ async def _run_director_project(
             )
         else:
             preview_note = f"首个带同步声音和定时字幕的预览镜头已生成（{audio_summary}）。"
+        from assistant_app.services.director_audio import mix_project_music
+        source = final_path or completed_shots[0].rendered_path
+        mixed = await mix_project_music(
+            runtime, project, source, GENERATED_ROOT / f"director-{project.id}-mix.mp4",
+            sum(float(s.seconds) for s in completed_shots))
+        if mixed != source:
+            final_path = mixed
+            project.final_video_path = mixed
+            await _update_project(runtime, project.id, final_video_path=mixed)
         await _update_run(
             runtime,
             media_run.id,

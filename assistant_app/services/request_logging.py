@@ -35,6 +35,8 @@ def redact_api_keys(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [redact_api_keys(item) for item in value]
     if isinstance(value, str):
+        if value.startswith("data:image/"):
+            return "[image payload omitted]"
         if value.lstrip().startswith(("{", "[")):
             try:
                 return json.dumps(redact_api_keys(json.loads(value)), ensure_ascii=False)

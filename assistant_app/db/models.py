@@ -317,6 +317,9 @@ class VideoJob(Base):
 
 
 class DirectorProject(Base):
+    postproduction: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
     # Legacy rows remain video; the creation service defaults new projects to whiteboard.
     production_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, default="video", server_default=text("'video'")
@@ -506,6 +509,9 @@ class MusicJob(Base):
 
 
 class SpeechJob(Base):
+    timing: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
     submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __tablename__ = "speech_jobs"
@@ -514,7 +520,7 @@ class SpeechJob(Base):
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    channel_id: Mapped[UUID] = mapped_column(
+    channel_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("speech_channels.id", ondelete="RESTRICT"), index=True
     )
     speech_text: Mapped[str] = mapped_column(Text, nullable=False)

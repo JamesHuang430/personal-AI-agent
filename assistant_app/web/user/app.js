@@ -18,6 +18,7 @@ let activeDirectorProject = null;
 let directorProjectTimer = null;
 let directorOneClickMode = false;
 let editingDirectorDraft = null;
+let directorSoundForNewVersion = null;
 let creativePreferences = {};
 let selectedDirectorStage = null;
 let activeStudioView = window.localStorage.getItem('assistant-studio-view') === 'library' ? 'library' : 'production';
@@ -1202,6 +1203,7 @@ async function loadDirectorProject(projectId) {
 
 function renderDirectorProject(project) {
   activeDirectorProject = project;
+  $('#project-sound').disabled = false;
   renderCreativeContext(project);
   $('#production-kicker').innerHTML = `<span class="live-dot"></span> DIRECTOR PROJECT · ${escapeHtml(project.id.slice(0, 8).toUpperCase())}`;
   $('#production-title').textContent = project.title;
@@ -1242,8 +1244,13 @@ function renderDirectorProject(project) {
     || directorRun?.decision_summary
     || '总导演编排器正在调度 4 位执行 Agent。页面展示结构化交付和真实工具执行结果。';
   if (project.status === 'awaiting_storyboard') {
-    $('#director-heading').textContent = '分镜已就绪，请核对后生成视频';
-    $('#director-summary').textContent = '尚未提交视频任务。先核对本片采用的偏好、故事和逐镜对白。';
+    const annotationReview = project.current_stage === 'whiteboard_annotation_review';
+    $('#director-heading').textContent = annotationReview ? '图片与旁白已就绪，请核对分区与时序' : '分镜已就绪，请核对后继续制作';
+    $('#director-summary').textContent = annotationReview
+      ? '素材已保存。逐镜检查分区、保护区和字幕时间，确认后才正式渲染；不会调用视频模型。'
+      : project.production_mode === 'whiteboard'
+        ? '先核对本片采用的偏好、故事和逐镜对白。确认后准备图片与旁白，之后还需确认分区。'
+        : '先核对本片采用的偏好、故事和逐镜对白，确认后开始生成视频。';
   }
   $('#project-settings').textContent = project.status === 'awaiting_confirmation' ? '编辑草案' : '以此新建一版';
 
@@ -1305,7 +1312,7 @@ function renderCreativeContext(project) {
     const readiness = document.createElement('p');
     readiness.textContent = '正在检查图片和语音渠道配置…'; context.append(readiness);
     api('/director/whiteboard-readiness').then(state => {
-      readiness.textContent = `${state.image_configured ? '图片渠道已配置' : '图片渠道未配置（可为每镜上传图片）'}；${state.speech_configured ? '语音渠道已配置' : '语音渠道未配置，请管理员启用后再生成'}。配置不代表余额或权限已验证。`;
+      readiness.textContent = `${state.image_configured ? '图片渠道已配置' : '图片渠道未配置（可为每镜上传图片）'}；${project.postproduction?.voice_mode === 'edge' ? '已选 Edge 配音，无需渠道密钥' : state.speech_configured ? '语音渠道已配置' : '语音渠道未配置，可在声音面板选择 Edge'}。配置不代表余额或权限已验证。`;
     }).catch(() => { readiness.textContent = '渠道状态暂不可用，请生成前检查后台配置。'; });
   }
   if (!explicit.length && !memories.length) {
@@ -1338,6 +1345,11 @@ function renderCreativeContext(project) {
     ? `${project.feedback.verdict === 'accepted' ? '已验收 · 满意' : '待修改'} · 贴合度 ${project.feedback.rating}/5 · ${project.feedback.notes || ''}`
     : (project.status === 'completed' ? '技术检查通过，等待你观看并验收。' : '');
   const panel = $('#storyboard-review-panel');
+  panel.querySelector('h2').textContent = project.current_stage === 'whiteboard_annotation_review'
+    ? '渲染前核对图片与分区' : '生成前核对故事与分镜';
+  panel.querySelector('p').textContent = project.production_mode === 'whiteboard'
+    ? '先确认故事以准备图片与旁白，再逐镜保存分区标注，最后确认正式渲染。全程不调用视频模型。'
+    : '核对下方故事、逐镜画面和对白；确认后才提交视频任务。需要修改可保存为新草案。';
   panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard' && !(project.production_mode === 'whiteboard' && project.status === 'failed'));
   $('#approve-storyboard-btn').classList.toggle('hidden', project.status !== 'awaiting_storyboard');
   const story = project.agents?.find(item => item.agent === 'story')?.result_data || {};
@@ -1347,7 +1359,7 @@ function renderCreativeContext(project) {
       <p>${escapeHtml(shot.positive_prompt || shot.action || '')}</p>
       <p>对白：${escapeHtml(shot.speech_text || '')}</p>
       <p>字幕：${escapeHtml(shot.subtitle_text || shot.speech_text || '')}</p>
-      ${project.production_mode === 'whiteboard' ? `<label>可选：上传此镜图片，跳过付费生图 <input type="file" accept="image/png,image/jpeg,image/webp" data-whiteboard-upload="${index + 1}"></label><small>PNG / JPEG / WebP，最多 12 MB。每镜整体描线再上色；字幕时间为估算。</small>` : ''}
+      ${project.production_mode === 'whiteboard' ? `<label>可选：上传此镜图片，跳过付费生图 <input type="file" accept="image/png,image/jpeg,image/webp" data-whiteboard-upload="${index + 1}"></label><small>PNG / JPEG / WebP，最多 12 MB。图片与旁白准备后需确认分区标注；字幕优先用渠道时间戳，缺失时估算。</small>` : ''}
     </article>`).join('');
   if (project.production_mode === 'whiteboard') {
     $('#storyboard-review-content').querySelectorAll('[data-whiteboard-upload]').forEach(input => {
@@ -1358,8 +1370,323 @@ function renderCreativeContext(project) {
         const image = document.createElement('img'); image.src = saved.image_url; image.alt = `第 ${sequence} 镜已保存图片`;
         image.style.cssText = 'display:block;max-width:240px;max-height:180px;margin:8px 0'; input.parentElement.after(image);
       }
+      if (saved?.whiteboard) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.dataset.whiteboardEditor = String(sequence);
+        button.textContent = `编辑分区与字幕时间 · ${saved.whiteboard.saved ? '已保存，待确认' : '待核对'}`;
+        button.disabled = saved.status === 'completed';
+        button.addEventListener('click', () => openWhiteboardEditor(project, saved));
+        input.closest('article').append(button);
+      }
     });
   }
+  $('#approve-storyboard-btn').textContent = project.current_stage === 'whiteboard_annotation_review'
+    ? '确认全部分区并正式渲染（无视频模型）'
+    : project.production_mode === 'whiteboard' ? '确认分镜，准备图片与旁白' : '确认分镜并生成';
+}
+
+$('#project-sound').addEventListener('click', () => {
+  if (activeDirectorProject) openDirectorSound(activeDirectorProject);
+});
+
+async function openDirectorSound(initialProject) {
+  document.getElementById('director-sound-editor')?.remove();
+  const dialog = document.createElement('dialog'); dialog.id = 'director-sound-editor';
+  dialog.innerHTML = `<h2>配音、字幕与背景音乐</h2>
+    <p>先核对分镜，再试听实际台词。同一版本、同一参数的试听会复用，不重复提交配音。
+    MiniMax 试听可能收费；Edge 无需 API Key，但需要联网，不保证服务可用性。</p>
+    <p data-sound-boundary></p><form>
+    <label>配音方式与音色<select name="voice"><option value="auto">自动：白板使用渠道配音，动态视频优先原声</option></select></label>
+    <p class="sound-warning">选定明确音色后，动态视频会替换原生音轨（含音效与原配乐），不保证口型同步。</p>
+    <small>自动模式保留原声音效与音乐，新配乐会叠加；压低检测基于整条原音轨，不是人声分离。</small>
+    <label>配音语速<input name="speed" type="number" min="0.5" max="2" step="0.05" value="1"></label>
+    <label>字幕样式<select name="style"><option value="classic">简洁白字</option><option value="large">大字易读</option><option value="panel">深色底板</option></select></label>
+    <label>背景音乐<select name="music"><option value="">不添加独立配乐</option></select></label>
+    <small>仅复用你已完成的音乐任务，不会生成新音乐。添加到最终成片；单镜原始预览保留原音轨。</small>
+    <audio data-music-audio controls preload="none" hidden></audio>
+    <label>配乐音量（0–0.5）<input name="volume" type="number" min="0" max="0.5" step="0.05" value="0.15"></label>
+    <label class="sound-checkbox"><input name="ducking" type="checkbox" checked>对白出现时压低背景音乐</label>
+    <button type="submit" data-sound-save>保存声音与字幕设置</button>
+    </form><hr><h3>逐镜台词试听</h3>
+    <label>选择镜头<select data-audition-sequence></select></label>
+    <p data-audition-text></p>
+    <button type="button" data-audition-start>保存并生成本镜试听</button>
+    <p data-audition-status role="status"></p><audio data-audition-audio controls preload="none" hidden></audio>
+    <p data-sound-error role="alert"></p><button type="button" data-sound-close>关闭</button>`;
+  document.body.append(dialog); dialog.showModal();
+  let project = initialProject, dirty = false, busy = false, loaded = false, timer;
+  const form = dialog.querySelector('form'), fields = form.elements;
+  const status = dialog.querySelector('[data-audition-status]');
+  const player = dialog.querySelector('[data-audition-audio]');
+  const sequence = dialog.querySelector('[data-audition-sequence]');
+  const error = message => {dialog.querySelector('[data-sound-error]').textContent = message;};
+  const editable = ['awaiting_confirmation','awaiting_storyboard'].includes(project.status)
+    && project.current_stage !== 'whiteboard_annotation_review'
+    && !(project.shots || []).some(shot => shot.speech_job_id);
+  dialog.querySelector('[data-sound-boundary]').textContent = editable
+    ? '设置绑定当前分镜确认版本。配音投入制作后将锁定；修改已制作的作品需新建一版。'
+    : '该项目已进入媒体制作，设置只读。需要修改请新建一版。';
+  const config = project.postproduction || {};
+  fields.speed.value = config.speed ?? 1; fields.style.value = config.subtitle_style || 'classic';
+  fields.volume.value = config.bgm_volume ?? 0.15; fields.ducking.checked = config.ducking !== false;
+  for (const [index, shot] of (project.storyboard || []).entries()) {
+    sequence.add(new Option(`第 ${index + 1} 镜 · ${shot.title || ''}`, String(index + 1)));
+  }
+  let voices = [], music = [];
+  const lock = () => {
+    for (const field of form.elements) field.disabled = busy || !editable || !loaded;
+    dialog.querySelector('[data-audition-start]').disabled = busy || !editable || !loaded
+      || project.status !== 'awaiting_storyboard' || !sequence.value || fields.voice.value === 'auto';
+    dialog.querySelector('[data-sound-close]').disabled = busy;
+    sequence.disabled = busy;
+  };
+  const paintJob = job => {
+    window.clearTimeout(timer);
+    player.hidden = true; player.removeAttribute('src');
+    if (!job) {status.textContent = '尚无试听。先选择明确音色；点击后才会提交配音。'; return;}
+    if (job.status === 'completed') {
+      player.src = job.download_url; player.hidden = false;
+      const current = fields.voice.value === 'auto' ? null : voices[Number(fields.voice.value)];
+      const stale = dirty || (current && (current.id !== job.voice_id || Number(fields.speed.value) !== job.speed));
+      status.textContent = `${stale ? '历史试听（设置已变化，请重新生成）' : '本镜试听已完成'} · ${job.voice_id} · ${((job.duration_ms || 0)/1000).toFixed(1)} 秒 · 字幕：${['edge','minimax'].includes(job.subtitle_timing) ? '渠道时间戳' : '估算/未返回时间戳'}`;
+    } else if (job.status === 'failed') {
+      status.textContent = job.error_message || '试听失败；未自动重新提交。';
+    } else {
+      status.textContent = '试听排队/生成中，完成前不能确认正式制作。';
+      const selectedSequence = sequence.value;
+      timer = window.setTimeout(async () => {
+        if (!dialog.isConnected) return;
+        try {const updated = await api(`/speech/${job.id}`); project.auditions ||= {};
+          project.auditions[selectedSequence] = updated;
+          if (sequence.value === selectedSequence) paintJob(updated);
+        } catch (exc) {error(exc.message);}
+      }, 3000);
+    }
+  };
+  const selectedShot = () => {
+    dialog.querySelector('[data-audition-text]').textContent = project.storyboard?.[Number(sequence.value)-1]?.speech_text || '分镜完成后可试听实际台词。';
+    paintJob(project.auditions?.[sequence.value]);
+  };
+  const chooseMusic = () => {
+    const audio = dialog.querySelector('[data-music-audio]'); audio.pause();
+    const selected = music.find(item => item.id === fields.music.value);
+    audio.hidden = !selected?.download_url;
+    if (selected?.download_url) audio.src = selected.download_url; else audio.removeAttribute('src');
+  };
+  const save = async () => {
+    if (!form.reportValidity()) throw new Error('请检查语速与音量范围');
+    const chosen = fields.voice.value === 'auto' ? null : voices[Number(fields.voice.value)];
+    const settings = {voice_mode: chosen?.mode || 'auto', voice_id: chosen?.id || '',
+      speed: Number(fields.speed.value), subtitle_style: fields.style.value,
+      bgm_job_id: fields.music.value || null, bgm_volume: Number(fields.volume.value), ducking: fields.ducking.checked};
+    project = await api(`/director/projects/${project.id}/sound`, {method:'PUT',
+      body:JSON.stringify({settings, storyboard_hash:project.storyboard_hash})});
+    dirty = false; renderDirectorProject(project); return project;
+  };
+  form.addEventListener('input', () => {dirty = true; lock();});
+  fields.voice.addEventListener('change', () => {dirty = true; lock(); selectedShot();});
+  fields.music.addEventListener('change', chooseMusic);
+  sequence.addEventListener('change', selectedShot);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (busy || !editable) return; busy = true; lock(); error('');
+    try {await save(); status.textContent = '设置已保存，请按需试听后确认分镜。';}
+    catch (exc) {error(exc.message);} finally {busy = false; lock();}
+  });
+  dialog.querySelector('[data-audition-start]').addEventListener('click', async () => {
+    if (busy || !editable) return; busy = true; lock(); error('');
+    try {
+      await save();
+      const job = await api(`/director/projects/${project.id}/auditions/${sequence.value}`, {
+        method:'POST', body:JSON.stringify({storyboard_hash:project.storyboard_hash})});
+      project.auditions ||= {}; project.auditions[sequence.value] = job; paintJob(job);
+    } catch (exc) {error(exc.message);} finally {busy = false; lock();}
+  });
+  dialog.querySelector('[data-sound-close]').addEventListener('click', () => {
+    if (dirty) {error('设置尚未保存；请先保存，或按 Esc 放弃修改。'); return;} dialog.close();
+  });
+  dialog.addEventListener('cancel', event => {if (busy) event.preventDefault();});
+  dialog.addEventListener('close', () => {window.clearTimeout(timer);
+    dialog.querySelectorAll('audio').forEach(audio => audio.pause()); dialog.remove();});
+  busy = true; lock();
+  try {
+    const [options, tracks] = await Promise.all([api('/director/audio-options'), api('/music')]);
+    if (!dialog.isConnected) return;
+    voices = options.voices || []; music = Array.isArray(tracks) ? tracks.filter(item => item.status === 'completed') : [];
+    if (config.voice_mode && config.voice_mode !== 'auto' && !voices.some(v => v.id === config.voice_id)) {
+      voices.push({id:config.voice_id,mode:config.voice_mode,name:`已保存音色 · ${config.voice_id}`});
+    }
+    voices.forEach((voice,index) => fields.voice.add(new Option(voice.name, String(index))));
+    if (config.voice_mode !== 'auto' && config.voice_id) fields.voice.value = String(voices.findIndex(v=>v.id===config.voice_id));
+    for (const track of music) fields.music.add(new Option((track.prompt || track.id).slice(0,80),track.id));
+    if (config.bgm_job_id && !music.some(m=>m.id===config.bgm_job_id)) {
+      fields.music.add(new Option('已保存音乐（当前列表不可用）',config.bgm_job_id));
+    }
+    fields.music.value = config.bgm_job_id || ''; loaded = true; chooseMusic(); selectedShot();
+  } catch (exc) {error(exc.message);} finally {busy = false; lock();}
+}
+
+function openWhiteboardEditor(project, shot) {
+  // Keep the unsaved editor separate from the polling-driven project DOM.
+  document.getElementById('whiteboard-editor')?.remove();
+  const dialog = document.createElement('dialog'); dialog.id = 'whiteboard-editor';
+  dialog.style.cssText = 'width:min(1100px,95vw);max-height:92vh;overflow:auto;padding:24px;border:1px solid #ccd4df;border-radius:16px';
+  dialog.innerHTML = `<h2>白板分区编辑 · 第 ${shot.sequence} 镜</h2>
+    <p data-wb-note></p><p>在图上拖动框选区域；修改坐标可移动或缩放。未标注内容不会在结尾突然出现。
+    区域按旁白顺序串行绘制。字幕来源：${({provider:'配音渠道时间戳（仍需复核）',manual:'人工校正',srt:'已导入 SRT',estimated:'文字时长估算'})[shot.whiteboard.annotation.subtitleAlignment] || '估算'}。可导入与旁白一致的 SRT 修正时间。</p>
+    <div style="display:flex;flex-wrap:wrap;gap:20px">
+      <div style="flex:1;min-width:240px"><div data-wb-stage style="position:relative;max-width:600px;touch-action:none">
+        <img data-wb-image alt="待标注的原始分镜图" style="display:block;width:100%">
+        <svg data-wb-overlay style="position:absolute;inset:0;width:100%;height:100%;cursor:crosshair" aria-label="拖动框选绘制区域"></svg>
+      </div><label>框选操作 <select data-wb-mode><option value="add">新增绘制区域</option><option value="replace">重画选中区域</option><option value="protect">添加选中区域的保护区</option></select></label>
+      <label>笔迹 <select data-wb-ink><option value="grid">连续网格笔迹</option><option value="skeleton">骨架贴线笔迹</option></select></label>
+      <p>红色虚线为保护区；后续区域也会自动从前序绘制中扣除。</p>
+      <label>SRT 字幕时间文件 <input type="file" data-wb-srt accept=".srt,text/plain"></label>
+      <details><summary>调整字幕时间（毫秒）</summary><div data-wb-cues></div></details>
+      </div><div style="flex:1;min-width:300px"><div data-wb-list></div></div>
+    </div><div class="wb-actions"><p data-wb-error role="alert" style="color:#b42318"></p>
+    <button type="button" data-wb-save>保存标注</button>
+    <button type="button" data-wb-preview>保存并生成真实笔迹预览</button>
+    <button type="button" data-wb-close>关闭编辑台</button></div>
+    <p>真实预览为低清无声笔迹；正式成片会加入已准备的旁白与字幕。本地预览不会调用模型。</p>
+    <video data-wb-video controls playsinline style="display:none;max-width:100%;max-height:450px"></video>`;
+  document.body.append(dialog);
+  const get = selector => dialog.querySelector(selector);
+  let data = structuredClone(shot.whiteboard.annotation);
+  let currentProject = project;
+  let selected = 0, busy = false, dirty = true;
+  get('[data-wb-note]').textContent = shot.whiteboard.note || '';
+  get('[data-wb-image]').src = shot.image_url;
+  const svg = get('[data-wb-overlay]');
+  svg.setAttribute('viewBox', `0 0 ${data.canvas.width} ${data.canvas.height}`);
+  const error = text => { get('[data-wb-error]').textContent = text; };
+  const changed = () => { dirty = true; get('[data-wb-video]').style.display = 'none'; };
+  function draw() {
+    svg.replaceChildren();
+    const addRect = (rect, color, dashed=false) => {
+      const node = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      for (const key of ['x','y','width','height']) node.setAttribute(key, rect[key]);
+      node.setAttribute('fill', 'none'); node.setAttribute('stroke',color);
+      node.setAttribute('stroke-width', Math.max(2,data.canvas.width/250));
+      if(dashed) node.setAttribute('stroke-dasharray','10 6');
+      svg.append(node);
+    };
+    data.elements.forEach((element,index) => {
+      addRect(element.region,index===selected?'#146ef5':'#78909c');
+      const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+      label.setAttribute('x',element.region.x+4); label.setAttribute('y',element.region.y+24);
+      label.setAttribute('font-size',Math.max(18,data.canvas.width/35)); label.setAttribute('fill','#146ef5');
+      label.textContent=String(index+1); svg.append(label);
+      if(index===selected) element.reveal.protectedRegions.forEach(rect=>addRect(rect,'#d92d20',true));
+    });
+  }
+  function numberInput(parent,label,value,onchange) {
+    const wrap=document.createElement('label'); wrap.style.cssText='display:inline-flex;gap:4px;margin:4px';
+    const input=document.createElement('input'); input.type='number'; input.step='1'; input.min='0'; input.value=value;
+    input.style.width='88px'; input.setAttribute('aria-label',label);
+    input.addEventListener('change',()=>{onchange(Number(input.value)); changed(); draw();});
+    wrap.append(document.createTextNode(label),input); parent.append(wrap);
+  }
+  function renderCues() {
+    const list=get('[data-wb-cues]'); list.replaceChildren();
+    data.cues.forEach(cue=>{
+      const row=document.createElement('div'), text=document.createElement('p');
+      text.textContent=`${cue.id}. ${cue.text}`; row.append(text);
+      numberInput(row,`字幕 ${cue.id} 开始`,cue.startMs,v=>cue.startMs=v);
+      numberInput(row,`字幕 ${cue.id} 结束`,cue.endMs,v=>cue.endMs=v); list.append(row);
+    });
+  }
+  function renderList() {
+    const list=get('[data-wb-list]'); list.replaceChildren();
+    if(!data.elements.length) list.textContent='暂无区域，请按旁白顺序在图片上框选对象。';
+    data.elements.forEach((element,index)=>{
+      element.sequence=index+1;
+      const row=document.createElement('fieldset'); row.style.marginBottom='12px';
+      const legend=document.createElement('legend'); legend.textContent=`区域 ${index+1}`; row.append(legend);
+      const name=document.createElement('input'); name.value=element.label; name.setAttribute('aria-label',`区域 ${index+1} 名称`);
+      name.addEventListener('input',()=>{element.label=name.value; changed();}); row.append(name);
+      const role=document.createElement('input'); role.value=element.narrativeRole; role.placeholder='在故事中的作用';
+      role.setAttribute('aria-label',`区域 ${index+1} 叙事作用`); role.addEventListener('input',()=>{element.narrativeRole=role.value;changed();}); row.append(role);
+      for(const key of ['x','y','width','height']) numberInput(row,`${index+1}.${key}`,element.region[key],v=>element.region[key]=v);
+      numberInput(row,`${index+1}.开始ms`,element.reveal.startMs,v=>element.reveal.startMs=v);
+      numberInput(row,`${index+1}.持续ms`,element.reveal.durationMs,v=>element.reveal.durationMs=v);
+      const cues=document.createElement('select'); cues.multiple=true; cues.setAttribute('aria-label',`区域 ${index+1} 关联字幕`);
+      cues.style.cssText='display:block;width:100%;margin:8px 0';
+      data.cues.forEach(c=>{const option=document.createElement('option');option.value=c.id;option.textContent=`${c.id}. ${c.text}`;option.selected=element.cueIds.includes(c.id);cues.append(option);});
+      cues.addEventListener('change',()=>{element.cueIds=Array.from(cues.selectedOptions,option=>Number(option.value));changed();});row.append(cues);
+      for(const [label,action] of [
+        ['选中框',()=>{selected=index;draw();}],
+        ['上移',()=>{if(index){[data.elements[index-1],data.elements[index]]=[element,data.elements[index-1]];selected=index-1;}}],
+        ['下移',()=>{if(index<data.elements.length-1){[data.elements[index+1],data.elements[index]]=[element,data.elements[index+1]];selected=index+1;}}],
+        ['清空保护区',()=>{element.reveal.protectedRegions=[];}],
+        ['删除区域',()=>{data.elements.splice(index,1);selected=0;}],
+      ]){const button=document.createElement('button');button.type='button';button.textContent=label;button.addEventListener('click',()=>{if(busy)return;action();changed();renderList();draw();});row.append(button);}
+      list.append(row);
+    });
+  }
+  let origin=null;
+  function point(event) {
+    const bounds=svg.getBoundingClientRect();
+    return {x:Math.max(0,Math.min(data.canvas.width,Math.round((event.clientX-bounds.left)/bounds.width*data.canvas.width))),
+      y:Math.max(0,Math.min(data.canvas.height,Math.round((event.clientY-bounds.top)/bounds.height*data.canvas.height)))};
+  }
+  svg.addEventListener('pointerdown',event=>{if(busy)return;origin=point(event);svg.setPointerCapture?.(event.pointerId);});
+  svg.addEventListener('pointerup',event=>{
+    if(!origin||busy)return;const end=point(event), start=origin;origin=null;
+    const rect={x:Math.min(start.x,end.x),y:Math.min(start.y,end.y),width:Math.abs(end.x-start.x),height:Math.abs(end.y-start.y)};
+    if(rect.width<2||rect.height<2)return;
+    const mode=get('[data-wb-mode]').value;
+    if(mode==='add') {
+      if(data.elements.length>=32){error('每镜最多 32 个区域');return;}
+      const previous=data.elements.at(-1), cue=data.cues[Math.min(data.elements.length,data.cues.length-1)];
+      const startMs=Math.max(100,cue.startMs,previous?previous.reveal.startMs+previous.reveal.durationMs:0);
+      const endMs=Math.min(data.sceneDurationMs-500,cue.endMs);
+      if(endMs-startMs<100){error('没有足够时间容纳新区域，请先调整前序区域时长或关联字幕。');return;}
+      data.elements.push({id:`region_${Date.now()}_${data.elements.length}`,label:`对象 ${data.elements.length+1}`,sequence:data.elements.length+1,
+        narrativeRole:'对应旁白中的可见对象',cueIds:[cue.id],region:rect,reveal:{startMs,durationMs:endMs-startMs,protectedRegions:[]}});
+      selected=data.elements.length-1;
+    } else if(data.elements[selected]) {
+      if(mode==='replace')data.elements[selected].region=rect;
+      else if(data.elements[selected].reveal.protectedRegions.length<16)data.elements[selected].reveal.protectedRegions.push(rect);
+      else {error('每个区域最多 16 个保护区');return;}
+    }
+    changed();error('');renderList();draw();
+  });
+  svg.addEventListener('pointercancel',()=>{origin=null;});
+  get('[data-wb-ink]').value=data.inkPath;
+  get('[data-wb-ink]').addEventListener('change',event=>{data.inkPath=event.target.value;changed();});
+  get('[data-wb-srt]').addEventListener('change',async event=>{
+    const file=event.target.files[0];if(!file)return;
+    if(file.size>64000){error('SRT 不得超过 64 KB');return;}
+    try {const result=await api('/director/whiteboard/parse-srt',{method:'POST',body:JSON.stringify({text:await file.text()})});
+      data.cues=result.cues;data.subtitleAlignment='srt';changed();renderCues();renderList();
+      error('字幕已导入，请重新检查区域的字幕关联；保存时会验证旁白内容一致。');
+    } catch(e){error(e.message);}
+  });
+  async function save(preview) {
+    if(busy)return;busy=true;error('');
+    dialog.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);
+    try {
+      const result=await api(`/director/projects/${project.id}/shots/${shot.id}/annotation`,{
+        method:'PUT',body:JSON.stringify({annotation:data,storyboard_hash:currentProject.storyboard_hash})});
+      currentProject=result;dirty=false;
+      if(activeDirectorProject?.id===result.id)renderDirectorProject(result);
+      get('[data-wb-note]').textContent='标注已保存。关闭编辑台后可确认全部分区并正式渲染。';
+      if(preview){
+        error('正在本地生成真实笔迹预览，请稍候…');
+        const saved=result.agents?.find(agent=>agent.agent==='visual')?.result_data?.whiteboard_annotations?.[String(shot.sequence)];
+        const output=await api(`/director/projects/${project.id}/shots/${shot.id}/annotation-preview`,{method:'POST',body:JSON.stringify({digest:saved})});
+        const video=get('[data-wb-video]');video.src=output.url;video.style.display='block';error('');
+      }
+    }catch(e){error(e.message);}
+    finally{busy=false;dialog.querySelectorAll('input,select,button').forEach(el=>el.disabled=false);}
+  }
+  get('[data-wb-save]').addEventListener('click',()=>save(false));
+  get('[data-wb-preview]').addEventListener('click',()=>save(true));
+  get('[data-wb-close]').addEventListener('click',()=>{
+    if(dirty){error('有未保存的修改。请先保存，或按 Esc 放弃本次编辑。');return;}dialog.close();dialog.remove();
+  });
+  dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();});
+  renderList();renderCues();draw();dialog.showModal();
 }
 
 $('#creative-preferences-btn').addEventListener('click', async () => {
@@ -1438,7 +1765,7 @@ $('#approve-storyboard-btn').addEventListener('click', async () => {
       method: 'POST', body: JSON.stringify({storyboard_hash: project.storyboard_hash}),
     });
     if (activeDirectorProject?.id === result.id) renderDirectorProject(result);
-    notify('已确认这版分镜，视频任务即将开始。');
+    notify(project.production_mode === 'whiteboard' ? '已确认，将继续白板素材准备或本地渲染，不调用视频模型。' : '已确认这版分镜，视频任务即将开始。');
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 });
@@ -1510,6 +1837,7 @@ function renderDirectorShots(project) {
 
 function showDirectorStart(oneClick = false, sourceProject = null, edit = false) {
   editingDirectorDraft = edit ? sourceProject?.id : null;
+  directorSoundForNewVersion = sourceProject?.postproduction || null;
   $('#director-start-form').reset();
   directorOneClickMode = oneClick;
   const title = $('#director-start-dialog h2');
@@ -1819,11 +2147,13 @@ function settleDirectorApproval(approved) {
   directorApprovalResolver = null;
   resolve(approved);
 }
-function showDirectorApproval({ title, premise, resolution, estimatedShots }) {
+function showDirectorApproval({ title, premise, resolution, estimatedShots, production_mode = 'video' }) {
   $('#director-approval-title').textContent = title;
   $('#director-approval-story').textContent = premise;
-  $('#director-approval-video-label').textContent = `通过后以 ${resolution} 生成视频`;
-  $('#director-approval-video-detail').textContent = `预计调用视频模型生成约 ${estimatedShots} 个镜头`;
+  $('#director-approval-video-label').textContent = production_mode === 'whiteboard' ? '白板手绘 · 本地合成' : `通过后以 ${resolution} 生成视频`;
+  $('#director-approval-video-detail').textContent = production_mode === 'whiteboard'
+    ? `约 ${estimatedShots} 幅图片与旁白；图片及分区需再确认，不调用视频模型`
+    : `预计调用视频模型生成约 ${estimatedShots} 个镜头`;
   const dialog = $('#director-approval-dialog');
   if (dialog.open) dialog.close();
   dialog.showModal();
@@ -1850,7 +2180,7 @@ $('#continue-production').addEventListener('click', async () => {
   if (awaitingConfirmation) {
     button.disabled = true;
     const estimatedShots = activeDirectorProject.one_click
-      ? Math.ceil(activeDirectorProject.target_seconds / 12)
+      ? Math.ceil(activeDirectorProject.target_seconds / (activeDirectorProject.production_mode === 'whiteboard' ? 35 : 12))
       : 1;
     const confirmed = await showDirectorApproval({
       title: '确认故事并开始预演',
@@ -1969,6 +2299,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
     const confirmed = await showDirectorApproval({
       title: '确认跳过故事复核并开始预演',
       premise: $('#director-premise').value.trim(),
+      production_mode: whiteboard ? 'whiteboard' : 'video',
       resolution,
       estimatedShots,
     });
@@ -1988,6 +2319,7 @@ $('#director-start-form').addEventListener('submit', async (event) => {
         continuity_notes: $('#director-continuity-notes').value.trim(),
     };
     if (!editingDirectorDraft) Object.assign(values, {
+      postproduction: directorSoundForNewVersion || {},
       one_click: directorOneClickMode, story_confirmed: !requireStoryConfirmation,
       use_memory: $('#director-use-memory').checked,
     });

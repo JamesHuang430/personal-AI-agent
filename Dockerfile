@@ -19,11 +19,42 @@ RUN groupadd --system assistant \
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
+
+# Install third-party dependencies before application sources so routine code changes
+# do not invalidate the dependency and local embedding-model layers.
+RUN mkdir -p assistant_app \
+    && touch assistant_app/__init__.py \
+    && python -m pip install . \
+    && rm -rf assistant_app
+
+COPY .model-cache /tmp/model-cache
+RUN mkdir -p /opt/fastembed \
+    && python -c "import os,tarfile,urllib.request; archive='/tmp/model-cache/fast-bge-small-zh-v1.5.tar.gz'; os.path.isfile(archive) or urllib.request.urlretrieve('https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz', archive); tarfile.open(archive, 'r:gz').extractall('/opt/fastembed', filter='data')" \
+    && python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/opt/fastembed', local_files_only=True)"
+
+# Keep OS media tools after the stable Python/model layers so application-image
+# rebuilds can reuse the expensive embedding cache.
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+RUN sed -i "s#http://deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY assistant_app ./assistant_app
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-RUN python -m pip install .
+# Dependencies are already installed in the stable layer above. Uvicorn and Alembic
+# import the current application directly from /app, so reinstalling the wheel here
+# would only risk replacing freshly copied source with stale build artifacts.
+RUN chmod -R a+rX /app
+
+ENV ASSISTANT_MEMORY_EMBEDDING_PROVIDER=local \
+    ASSISTANT_MEMORY_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \
+    ASSISTANT_MEMORY_EMBEDDING_CACHE=/opt/fastembed \
+    ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY=true \
+    ASSISTANT_MEMORY_EMBEDDING_THREADS=2 \
+    XDG_CACHE_HOME=/tmp/assistant-cache
 
 USER assistant
 EXPOSE 8000 19000

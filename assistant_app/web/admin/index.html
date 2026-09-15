@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>知伴 · 运营控制台</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=0.8">
 </head>
 <body>
   <section id="login-view" class="login-shell">
@@ -12,10 +12,11 @@
       <div class="console-logo">知</div>
       <p class="eyebrow">OPERATIONS CONSOLE</p>
       <h1>登录运营后台</h1>
-      <p class="muted">管理用户、积分套餐与大模型渠道</p>
+      <p class="muted">管理用户、积分套餐与文本、视频、语音、音乐模型渠道</p>
       <form id="login-form">
         <label>用户名<input id="username" autocomplete="username" value="admin" required></label>
         <label>密码<input id="admin-password" type="password" autocomplete="current-password" required></label>
+        <label>验证码<span class="captcha-row"><input id="admin-captcha-answer" inputmode="numeric" autocomplete="off" placeholder="输入计算结果" required><button id="admin-captcha-question" type="button" title="点击刷新">加载中…</button></span></label>
         <button class="primary wide" type="submit">进入控制台 →</button>
       </form>
       <p class="secure-note">管理员会话使用 HttpOnly Cookie，API Key 加密保存</p>
@@ -29,8 +30,13 @@
         <button class="nav-item active" data-page="overview" type="button"><span>⌂</span>概览</button>
         <button class="nav-item" data-page="users" type="button"><span>◎</span>用户管理</button>
         <button class="nav-item" data-page="packages" type="button"><span>◇</span>积分套餐</button>
-        <button class="nav-item" data-page="channels" type="button"><span>⌁</span>模型渠道</button>
+        <button class="nav-item" data-page="channels" type="button"><span>⌁</span>文本模型渠道</button>
         <button class="nav-item" data-page="video-channels" type="button"><span>▶</span>视频渠道</button>
+        <button class="nav-item" data-page="speech-channels" type="button"><span>◉</span>语音渠道</button>
+        <button class="nav-item" data-page="image-channels" type="button"><span>▧</span>图片渠道</button>
+        <button class="nav-item" data-page="music-channels" type="button"><span>♫</span>音乐渠道</button>
+        <button class="nav-item" data-page="request-logs" type="button"><span>≡</span>请求日志</button>
+        <button class="nav-item" data-page="email-channel" type="button"><span>✉</span>邮件服务</button>
       </nav>
       <div class="sidebar-foot"><span class="online-dot"></span>运营服务在线</div>
     </aside>
@@ -41,7 +47,7 @@
       </header>
       <div class="content">
         <section id="page-overview" class="page">
-          <div class="page-heading"><div><p class="eyebrow purple">DASHBOARD</p><h1>运营概览</h1><p class="muted">掌握用户增长、套餐与模型渠道状态</p></div><button class="ghost refresh" type="button">刷新数据</button></div>
+          <div class="page-heading"><div><p class="eyebrow purple">DASHBOARD</p><h1>运营概览</h1><p class="muted">掌握用户增长、套餐与各类模型渠道状态</p></div><button class="ghost refresh" type="button">刷新数据</button></div>
           <div id="stats" class="stats-grid"></div>
           <div class="info-grid">
             <article class="panel"><h3>注册规则</h3><div class="rule-row"><strong>3</strong><span>每天最多注册用户数</span></div><div class="rule-row"><strong>100</strong><span>每日签到奖励积分</span></div></article>
@@ -70,42 +76,137 @@
         </section>
 
         <section id="page-channels" class="page hidden">
-          <div class="page-heading"><div><p class="eyebrow purple">MODEL PROVIDERS</p><h1>大模型渠道</h1><p class="muted">配置 OpenAI 兼容渠道，切换当前模型并控制全局 QPS</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow purple">TEXT MODEL PROVIDERS</p><h1>文本模型渠道</h1><p class="muted">配置 Agent 推理与对话渠道，具体文本模型由用户在前端选择</p></div></div>
           <div class="security-banner"><span>⌾</span><div><strong>密钥安全</strong><p>API Key 经加密后入库，保存后不再回显；编辑时留空表示保持原 Key。</p></div></div>
           <form id="channel-form" class="panel editor-form channel-form">
             <input id="channel-id" type="hidden">
             <label>渠道名称<input id="channel-name" placeholder="如：OpenAI 主渠道" required></label>
             <label>Base URL<input id="channel-url" type="url" placeholder="https://api.openai.com/v1" required></label>
             <label>API Key<input id="channel-key" type="password" placeholder="sk-..." required></label>
-            <label>模型名<input id="channel-model" value="gpt-4o-mini" required></label>
             <label>QPS 限制<input id="channel-qps" type="number" min="1" max="1000" value="2" required></label>
-            <label class="switch-label"><input id="channel-active" type="checkbox">保存后立即启用</label>
+            <label class="switch-label"><input id="channel-active" type="checkbox">保存后设为当前渠道</label>
             <div class="form-actions"><button id="channel-save" class="primary" type="submit">新增渠道</button><button id="channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="channel-grid" class="channel-grid"></div>
         </section>
 
         <section id="page-video-channels" class="page hidden">
-          <div class="page-heading"><div><p class="eyebrow purple">VIDEO PROVIDERS</p><h1>视频生成渠道</h1><p class="muted">配置 OpenAI Videos API 兼容渠道、默认画面参数和全局 QPS</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow purple">VIDEO PROVIDERS</p><h1>视频生成渠道</h1><p class="muted">配置 MiniMax H3 或 OpenAI Videos API 渠道、默认画面参数和全局 QPS</p></div></div>
           <div class="security-banner"><span>▶</span><div><strong>异步视频任务</strong><p>用户提出视频生成要求后，Agent 自动提交任务并轮询结果；API Key 加密入库且不回显。</p></div></div>
+          <div id="video-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的视频渠道</strong><p>视频生成暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
           <form id="video-channel-form" class="panel editor-form channel-form">
             <input id="video-channel-id" type="hidden">
             <label>渠道名称<input id="video-channel-name" placeholder="如：视频主渠道" required></label>
-            <label>Base URL<input id="video-channel-url" type="url" placeholder="https://api.example.com/v1" required></label>
+            <label>协议<select id="video-channel-provider"><option value="minimax">MiniMax H3（官方 / AI Ping）</option><option value="openai">OpenAI Videos</option></select></label>
+            <label>Base URL<input id="video-channel-url" type="url" value="https://api.minimaxi.com" required></label>
             <label>API Key<input id="video-channel-key" type="password" placeholder="sk-..." required></label>
-            <label>模型名<input id="video-channel-model" value="sora-2" required></label>
+            <label>模型名<input id="video-channel-model" value="MiniMax-H3" required></label>
             <label>QPS 限制<input id="video-channel-qps" type="number" min="1" max="1000" value="1" required></label>
             <label>默认时长<select id="video-channel-seconds"><option value="4">4 秒</option><option value="8">8 秒</option><option value="12">12 秒</option></select></label>
             <label>默认尺寸<select id="video-channel-size"><option value="1280x720">1280×720 横屏</option><option value="720x1280">720×1280 竖屏</option><option value="1792x1024">1792×1024 横屏</option><option value="1024x1792">1024×1792 竖屏</option></select></label>
-            <label class="switch-label"><input id="video-channel-active" type="checkbox">保存后立即启用</label>
+            <label>MiniMax 清晰度<select id="video-channel-resolution"><option value="768P">768P（测试/预览）</option><option value="2K">2K（成片）</option></select></label>
+            <label class="switch-label"><input id="video-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
             <div class="form-actions"><button id="video-channel-save" class="primary" type="submit">新增视频渠道</button><button id="video-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
           </form>
           <div id="video-channel-grid" class="channel-grid"></div>
         </section>
+
+        <section id="page-image-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">IMAGE PROVIDERS</p><h1>图片生成渠道</h1><p class="muted">白板产线专用；与语音、视频渠道独立配置，不自动共用密钥。</p></div></div>
+          <div class="security-banner"><span>▧</span><div><strong>MiniMax 生图 + 本地白板合成</strong><p>图片、语音 API 可能收费；本地渲染不调用视频模型。配置保存不会发起付费测试。上传自有图片可跳过生图。</p></div></div>
+          <form id="image-channel-form" class="panel editor-form channel-form">
+            <input id="image-channel-id" type="hidden">
+            <label>渠道名称<input id="image-channel-name" value="MiniMax Image" maxlength="100" required></label>
+            <label>Base URL<input id="image-channel-url" type="url" value="https://api.minimaxi.com" required></label>
+            <label>API Key<input id="image-channel-key" type="password" placeholder="独立配置生图权限 Key" required autocomplete="new-password"></label>
+            <label>图片模型<select id="image-channel-model"><option>image-01</option><option>image-01-live</option></select></label>
+            <label>QPS 上限<input id="image-channel-qps" type="number" min="1" max="20" value="1" required></label>
+            <label class="switch-label"><input id="image-channel-active" type="checkbox">启用此渠道</label>
+            <div class="form-actions"><button id="image-channel-save" class="primary" type="submit">新增图片渠道</button><button id="image-channel-cancel" class="ghost" type="button">重置表单</button></div>
+          </form>
+          <div id="image-channel-grid" class="channel-grid"></div>
+        </section>
+        <section id="page-speech-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">SPEECH PROVIDERS</p><h1>语音配音渠道</h1><p class="muted">为短剧生成对白、旁白和固定声线配音；H3 原生音轨可用时优先保留，仅在补配音时调用</p></div></div>
+          <div class="security-banner"><span>◉</span><div><strong>MiniMax Speech / T2A</strong><p>语音同步生成并保存为可下载音频；Speech 用于配音，Music 只用于歌曲和背景音乐。</p></div></div>
+          <div id="speech-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的语音渠道</strong><p>对白与旁白配音暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
+          <form id="speech-channel-form" class="panel editor-form channel-form">
+            <input id="speech-channel-id" type="hidden">
+            <label>渠道名称<input id="speech-channel-name" value="MiniMax Speech" required></label>
+            <label>Base URL<input id="speech-channel-url" type="url" value="https://api.minimaxi.com" required></label>
+            <label>API Key<input id="speech-channel-key" type="password" placeholder="sk-..." required></label>
+            <label>模型名<input id="speech-channel-model" value="speech-2.8-hd" required></label>
+            <label>默认声线 ID<input id="speech-channel-voice" value="male-qn-qingse" required></label>
+            <label>QPS 限制<input id="speech-channel-qps" type="number" min="1" max="1000" value="1" required></label>
+            <label>默认格式<select id="speech-channel-format"><option value="mp3">MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option></select></label>
+            <label class="switch-label"><input id="speech-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
+            <div class="form-actions"><button id="speech-channel-save" class="primary" type="submit">新增语音渠道</button><button id="speech-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="speech-channel-grid" class="channel-grid"></div>
+        </section>
+
+        <section id="page-music-channels" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">MUSIC PROVIDERS</p><h1>音乐模型渠道</h1><p class="muted">只为短剧生成主题曲、背景音乐和氛围配乐，不用于对白或旁白配音</p></div></div>
+          <div class="security-banner"><span>♫</span><div><strong>MiniMax Music 异步产物</strong><p>音乐任务完成后保存到本地生成文件卷，API Key 加密入库且不回显。</p></div></div>
+          <div id="music-channel-warning" class="channel-warning hidden" role="status"><span>!</span><div><strong>当前没有启用的音乐渠道</strong><p>音乐生成暂不可用。请点击下方渠道卡片中的“启用渠道”，或编辑渠道并勾选“启用此渠道”。</p></div></div>
+          <form id="music-channel-form" class="panel editor-form channel-form">
+            <input id="music-channel-id" type="hidden">
+            <label>渠道名称<input id="music-channel-name" value="MiniMax Music" required></label>
+            <label>Base URL<input id="music-channel-url" type="url" value="https://api.minimaxi.com" required></label>
+            <label>API Key<input id="music-channel-key" type="password" placeholder="sk-..." required></label>
+            <label>模型名<input id="music-channel-model" value="music-2.6" required></label>
+            <label>QPS 限制<input id="music-channel-qps" type="number" min="1" max="1000" value="1" required></label>
+            <label>默认格式<select id="music-channel-format"><option value="mp3">MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option></select></label>
+            <label class="switch-label"><input id="music-channel-active" type="checkbox">启用此渠道（保存后生效）</label>
+            <div class="form-actions"><button id="music-channel-save" class="primary" type="submit">新增音乐渠道</button><button id="music-channel-cancel" class="ghost hidden" type="button">取消编辑</button></div>
+          </form>
+          <div id="music-channel-grid" class="channel-grid"></div>
+        </section>
+
+        <section id="page-request-logs" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">REQUEST AUDIT</p><h1>请求日志</h1><p class="muted">记录每次站内请求和文本大模型调用；输入、输出完整保留，仅 API Key 脱敏</p></div><button id="request-log-refresh" class="ghost" type="button">刷新</button></div>
+          <div class="toolbar request-log-toolbar">
+            <select id="request-log-category"><option value="all">全部类型</option><option value="model">大模型调用</option><option value="http">HTTP 请求</option></select>
+            <select id="request-log-status"><option value="">全部状态</option><option value="200">200 成功</option><option value="400">400</option><option value="401">401</option><option value="403">403</option><option value="404">404</option><option value="422">422</option><option value="500">500 错误</option></select>
+            <input id="request-log-query" placeholder="搜索路径、模型、用户或 Request ID">
+            <button id="request-log-search" class="primary" type="button">查询</button>
+          </div>
+          <div class="panel table-panel"><table class="request-log-table"><thead><tr><th>时间</th><th>类型 / 来源</th><th>请求</th><th>用户</th><th>状态</th><th>耗时</th><th></th></tr></thead><tbody id="request-log-table"></tbody></table><p id="request-log-empty" class="empty hidden">暂无匹配日志</p></div>
+          <div class="log-pagination"><span id="request-log-total" class="muted"></span><div><button id="request-log-prev" class="ghost" type="button">上一页</button><button id="request-log-next" class="ghost" type="button">下一页</button></div></div>
+        </section>
+
+        <section id="page-email-channel" class="page hidden">
+          <div class="page-heading"><div><p class="eyebrow purple">EMAIL DELIVERY</p><h1>邮件服务</h1><p class="muted">配置注册验证码、测试邮件和密码重置邮件的 SMTP 渠道</p></div></div>
+          <div class="security-banner"><span>✉</span><div><strong>授权码安全</strong><p>SMTP 授权码加密入库，保存后不再回显；编辑时留空表示保持原授权码。</p></div></div>
+          <form id="email-channel-form" class="panel editor-form channel-form">
+            <label>渠道名称<input id="email-channel-name" value="163 SMTP" required></label>
+            <label>SMTP 主机<input id="email-channel-host" value="smtp.163.com" required></label>
+            <label>SMTP 端口<input id="email-channel-port" type="number" min="1" max="65535" value="465" required></label>
+            <label>发件邮箱<input id="email-channel-username" type="email" placeholder="your-account@163.com" required></label>
+            <label>SMTP 授权码<input id="email-channel-code" type="password" autocomplete="new-password" placeholder="首次配置必填"></label>
+            <label>发件人名称<input id="email-channel-from-name" value="知伴 AI" required></label>
+            <label class="switch-label"><input id="email-channel-ssl" type="checkbox" checked>使用 SSL/TLS</label>
+            <label class="switch-label"><input id="email-channel-active" type="checkbox" checked>启用邮件发送</label>
+            <div class="form-actions"><button id="email-channel-save" class="primary" type="submit">保存邮件配置</button></div>
+          </form>
+          <form id="email-test-form" class="panel email-test-form">
+            <div><h3>发送测试邮件</h3><p id="email-channel-status" class="muted">保存配置后可发送测试邮件</p></div>
+            <input id="email-test-recipient" type="email" placeholder="测试收件邮箱" required>
+            <button class="ghost" type="submit">发送测试邮件</button>
+          </form>
+        </section>
       </div>
     </main>
   </div>
+  <dialog id="request-log-dialog" class="log-dialog">
+    <div class="log-dialog-head"><div><p class="eyebrow purple">REQUEST DETAIL</p><h2 id="request-log-detail-title">请求详情</h2></div><button id="request-log-close" type="button" aria-label="关闭">×</button></div>
+    <div id="request-log-meta" class="log-meta"></div>
+    <section><h3>输入</h3><pre id="request-log-input"></pre></section>
+    <section><h3>输出</h3><pre id="request-log-output"></pre></section>
+    <section id="request-log-error-wrap" class="hidden"><h3>错误</h3><pre id="request-log-error" class="error-output"></pre></section>
+  </dialog>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=0.8" defer></script>
+  <script src="/static/image-channels.js?v=1" defer></script>
 </body>
 </html>

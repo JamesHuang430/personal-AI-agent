@@ -2,8 +2,11 @@
 
 from assistant_app.db.models import (
     DailyCheckin,
+    EmailChannel,
     GeneratedFile,
     ModelChannel,
+    MusicChannel,
+    MusicJob,
     Package,
     PointLedger,
     User,
@@ -13,8 +16,11 @@ from assistant_app.db.models import (
 
 __all__ = [
     "DailyCheckin",
+    "EmailChannel",
     "GeneratedFile",
     "ModelChannel",
+    "MusicChannel",
+    "MusicJob",
     "Package",
     "PointLedger",
     "User",

@@ -33,3 +33,8 @@ uploads/
 generated/
 backups/
 work/
+.model-cache/*.tar.gz
+
+# Node dependencies for the optional Pi Runtime sidecar
+pi_runtime/node_modules/
+tests/web/node_modules/

@@ -23,19 +23,38 @@ compose_cmd=(
     --file "${deploy_dir}/compose.yaml"
 )
 
+pi_enabled=false
+if [[ "${ASSISTANT_AGENT_RUNTIME:-python}" == "pi" ]]; then
+    pi_enabled=true
+    compose_cmd+=(--profile pi)
+fi
+
 cd "${project_dir}"
 
 echo "Validating Compose configuration..."
 "${compose_cmd[@]}" config --quiet
 
-echo "Building application image..."
-"${compose_cmd[@]}" build --pull assistant-api
+echo "Building application and PostgreSQL extension images..."
+build_targets=(postgres assistant-api)
+if [[ "${pi_enabled}" == "true" ]]; then
+    build_targets+=(pi-runtime)
+fi
+"${compose_cmd[@]}" build --pull "${build_targets[@]}"
 
-echo "Starting lightweight base stack..."
-"${compose_cmd[@]}" up -d postgres redis assistant-api admin-api nginx
+echo "Starting data services..."
+"${compose_cmd[@]}" up -d postgres redis
 
 echo "Applying database migrations..."
-"${compose_cmd[@]}" exec -T assistant-api alembic upgrade head
+"${compose_cmd[@]}" run --rm --no-deps assistant-api alembic upgrade head
+
+echo "Starting application services..."
+application_services=(assistant-api admin-api worker nginx)
+if [[ "${pi_enabled}" == "true" ]]; then
+    application_services=(pi-runtime "${application_services[@]}")
+fi
+"${compose_cmd[@]}" up -d "${application_services[@]}"
+# Refresh Nginx's resolved upstream addresses after application containers are recreated.
+"${compose_cmd[@]}" restart nginx
 
 echo "Waiting for API health..."
 for attempt in $(seq 1 30); do

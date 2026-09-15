@@ -12,18 +12,30 @@ cd /home/ubuntu/code/ai-agent
 The deployment starts PostgreSQL, Redis, the user API, the operations API and
 Nginx. Only Nginx publishes host ports: HTTPS `18000` for the user application
 and HTTPS `19000` for the operations console. Backend services stay on the
-internal Compose network. MinIO and Neo4j remain optional profiles.
+internal Compose network. pgvector and Apache AGE run inside PostgreSQL; MinIO
+remains an optional profile.
 
 The cloud security group must allow TCP `18000` for users and TCP `19000` for
 operators. Restrict `19000` to trusted source IPs whenever possible.
+
+After the first operations login, open **邮件服务** and configure the sender
+mailbox, SMTP host/port, authorization code and TLS mode. The authorization
+code is encrypted in PostgreSQL and is never returned by the API. Use the test
+mail action before enabling public registration and password reset.
 
 `deploy/deploy.sh` creates an IP-aware self-signed certificate in
 `deploy/certs/` when no certificate exists. Browsers will warn until the public
 certificate is explicitly trusted. Replace it with a CA-issued certificate as
 soon as a domain is available; never commit the private key.
 
-Do not enable the `graph` profile on the current 3.6 GiB server while the old
-stack is still running.
+Knowledge-graph queries do not expose a separate database port. All access goes
+through the authenticated application API and is scoped to the current user.
+
+The optional Pi Agent Runtime is enabled with `ASSISTANT_AGENT_RUNTIME=pi` and
+a dedicated `PI_RUNTIME_SHARED_SECRET` of at least 32 characters in
+`deploy/.env`. The deployment script then builds and starts the isolated
+`pi-runtime` profile automatically. Set the runtime back to `python` and rerun
+the deployment script for an immediate rollback.
 
 When document ingestion is implemented, enable object storage with:
 

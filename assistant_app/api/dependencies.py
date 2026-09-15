@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException, Request, status
 from sqlalchemy import select
 
+from assistant_app.core.request_context import set_request_actor
 from assistant_app.core.security import session_digest
 from assistant_app.db.models import User
 from assistant_app.db.runtime import RuntimeDependencies
@@ -27,6 +28,8 @@ async def current_user(request: Request) -> User:
         user = await session.scalar(select(User).where(User.id == UUID(user_id)))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已被停用")
+    request.state.actor = user.email
+    set_request_actor(user.email)
     return user
 
 
@@ -39,4 +42,6 @@ async def current_admin(request: Request) -> str:
     username = await runtime.redis.get(f"session:admin:{session_digest(token)}")
     if not username:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已过期")
+    request.state.actor = f"admin:{username}"
+    set_request_actor(f"admin:{username}")
     return username

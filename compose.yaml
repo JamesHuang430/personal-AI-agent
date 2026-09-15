@@ -16,8 +16,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: personal-ai-assistant-api:0.1.0
-    environment:
+    image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
+    environment: &assistant-environment
       ASSISTANT_ENVIRONMENT: ${ASSISTANT_ENVIRONMENT:-development}
       ASSISTANT_LOG_LEVEL: ${ASSISTANT_LOG_LEVEL:-INFO}
       ASSISTANT_LOG_JSON: ${ASSISTANT_LOG_JSON:-true}
@@ -27,10 +27,37 @@ services:
       ASSISTANT_ADMIN_USERNAME: ${ASSISTANT_ADMIN_USERNAME:-admin}
       ASSISTANT_ADMIN_PASSWORD: ${ASSISTANT_ADMIN_PASSWORD:-change-this-admin-password}
       ASSISTANT_SECRET_KEY: ${ASSISTANT_SECRET_KEY:-change-this-application-secret-key}
+      ASSISTANT_PUBLIC_URL: ${ASSISTANT_PUBLIC_URL:-http://127.0.0.1:18000}
+      ASSISTANT_MEMORY_ENABLED: ${ASSISTANT_MEMORY_ENABLED:-true}
+      ASSISTANT_MEMORY_EMBEDDING_PROVIDER: ${ASSISTANT_MEMORY_EMBEDDING_PROVIDER:-local}
+      ASSISTANT_MEMORY_EMBEDDING_MODEL: ${ASSISTANT_MEMORY_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      ASSISTANT_MEMORY_EMBEDDING_CACHE: ${ASSISTANT_MEMORY_EMBEDDING_CACHE:-/opt/fastembed}
+      ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY: ${ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY:-true}
+      ASSISTANT_MEMORY_EMBEDDING_THREADS: ${ASSISTANT_MEMORY_EMBEDDING_THREADS:-2}
+      ASSISTANT_WEB_SEARCH_ENABLED: ${ASSISTANT_WEB_SEARCH_ENABLED:-true}
+      ASSISTANT_WEB_SEARCH_BASE_URL: ${ASSISTANT_WEB_SEARCH_BASE_URL:-http://searxng:8080}
+      ASSISTANT_WEB_SEARCH_MAX_RESULTS: ${ASSISTANT_WEB_SEARCH_MAX_RESULTS:-6}
+      ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS: ${ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS:-15}
+      ASSISTANT_WEB_FETCH_MAX_BYTES: ${ASSISTANT_WEB_FETCH_MAX_BYTES:-1500000}
+      ASSISTANT_WEB_FETCH_MAX_CHARS: ${ASSISTANT_WEB_FETCH_MAX_CHARS:-12000}
+      ASSISTANT_MCP_ENABLED: ${ASSISTANT_MCP_ENABLED:-true}
+      ASSISTANT_MCP_MARKITDOWN_URL: ${ASSISTANT_MCP_MARKITDOWN_URL:-http://markitdown-mcp:3001/mcp}
+      ASSISTANT_MCP_TIMEOUT_SECONDS: ${ASSISTANT_MCP_TIMEOUT_SECONDS:-30}
+      ASSISTANT_MCP_MAX_RESULT_CHARS: ${ASSISTANT_MCP_MAX_RESULT_CHARS:-30000}
+      ASSISTANT_DOCUMENT_MAX_BYTES: ${ASSISTANT_DOCUMENT_MAX_BYTES:-20000000}
+      ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE: ${ASSISTANT_DOCUMENT_MAX_FILES_PER_MESSAGE:-4}
+      ASSISTANT_AGENT_RUNTIME: ${ASSISTANT_AGENT_RUNTIME:-python}
+      ASSISTANT_PI_RUNTIME_URL: ${ASSISTANT_PI_RUNTIME_URL:-http://pi-runtime:8787}
+      ASSISTANT_PI_RUNTIME_SHARED_SECRET: ${PI_RUNTIME_SHARED_SECRET:-}
+      ASSISTANT_PI_RUNTIME_TIMEOUT_SECONDS: ${ASSISTANT_PI_RUNTIME_TIMEOUT_SECONDS:-120}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+      markitdown-mcp:
         condition: service_healthy
     ports:
       # 18000 avoids the existing deploy-api-1 binding on host port 8000.
@@ -46,6 +73,53 @@ services:
       - edge_net
       - app_net
       - data_net
+      - mcp_net
+
+  worker:
+    <<: *service-defaults
+    image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
+    command: ["python", "-m", "assistant_app.worker"]
+    environment: *assistant-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - generated_files:/data/generated
+    healthcheck:
+      disable: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - edge_net
+      - app_net
+      - data_net
+      - mcp_net
+
+  pi-runtime:
+    <<: *service-defaults
+    profiles: ["pi"]
+    build:
+      context: ./pi_runtime
+      dockerfile: Dockerfile
+    image: personal-ai-assistant-pi-runtime:0.1.0
+    environment:
+      PORT: 8787
+      PI_RUNTIME_SHARED_SECRET: ${PI_RUNTIME_SHARED_SECRET:-}
+      PI_RUNTIME_TOOL_BRIDGE_URL: ${ASSISTANT_PI_RUNTIME_TOOL_BRIDGE_URL:-http://assistant-api:8000/api/v1/internal/pi/tools/execute}
+    expose:
+      - "8787"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - app_net
 
   admin-api:
     image: personal-ai-assistant-api:${ASSISTANT_IMAGE_TAG:-0.1.0}
@@ -60,6 +134,18 @@ services:
       ASSISTANT_ADMIN_USERNAME: ${ASSISTANT_ADMIN_USERNAME:-admin}
       ASSISTANT_ADMIN_PASSWORD: ${ASSISTANT_ADMIN_PASSWORD:-change-this-admin-password}
       ASSISTANT_SECRET_KEY: ${ASSISTANT_SECRET_KEY:-change-this-application-secret-key}
+      ASSISTANT_MEMORY_ENABLED: ${ASSISTANT_MEMORY_ENABLED:-true}
+      ASSISTANT_MEMORY_EMBEDDING_PROVIDER: ${ASSISTANT_MEMORY_EMBEDDING_PROVIDER:-local}
+      ASSISTANT_MEMORY_EMBEDDING_MODEL: ${ASSISTANT_MEMORY_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      ASSISTANT_MEMORY_EMBEDDING_CACHE: ${ASSISTANT_MEMORY_EMBEDDING_CACHE:-/opt/fastembed}
+      ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY: ${ASSISTANT_MEMORY_EMBEDDING_LOCAL_FILES_ONLY:-true}
+      ASSISTANT_MEMORY_EMBEDDING_THREADS: ${ASSISTANT_MEMORY_EMBEDDING_THREADS:-2}
+      ASSISTANT_WEB_SEARCH_ENABLED: ${ASSISTANT_WEB_SEARCH_ENABLED:-true}
+      ASSISTANT_WEB_SEARCH_BASE_URL: ${ASSISTANT_WEB_SEARCH_BASE_URL:-http://searxng:8080}
+      ASSISTANT_WEB_SEARCH_MAX_RESULTS: ${ASSISTANT_WEB_SEARCH_MAX_RESULTS:-6}
+      ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS: ${ASSISTANT_WEB_SEARCH_TIMEOUT_SECONDS:-15}
+      ASSISTANT_WEB_FETCH_MAX_BYTES: ${ASSISTANT_WEB_FETCH_MAX_BYTES:-1500000}
+      ASSISTANT_WEB_FETCH_MAX_CHARS: ${ASSISTANT_WEB_FETCH_MAX_CHARS:-12000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,9 +163,57 @@ services:
       - app_net
       - data_net
 
+  searxng:
+    <<: *service-defaults
+    image: docker.io/searxng/searxng:${SEARXNG_IMAGE_TAG:-latest}
+    environment:
+      SEARXNG_SECRET: ${ASSISTANT_SECRET_KEY:-change-this-application-secret-key}
+      SEARXNG_BIND_ADDRESS: 0.0.0.0
+      SEARXNG_PORT: 8080
+      FORCE_OWNERSHIP: "false"
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "--proxy=off", "--header", "X-Real-IP: 127.0.0.1", "http://127.0.0.1:8080/healthz"]
+      start_period: 30s
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./deploy/searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+      - searxng_cache:/var/cache/searxng
+    networks:
+      - edge_net
+      - app_net
+
+  markitdown-mcp:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: docker/markitdown-mcp/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}
+    image: personal-ai-assistant-markitdown-mcp:${MARKITDOWN_MCP_IMAGE_TAG:-0.0.1a4}
+    expose:
+      - "3001"
+    volumes:
+      - generated_files:/data/generated:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    networks:
+      - mcp_net
+
   postgres:
     <<: *service-defaults
-    image: pgvector/pgvector:pg16
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    image: personal-ai-assistant-postgres:${POSTGRES_IMAGE_TAG:-pg16-trixie-age1.6-vector0.8.6}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-assistant}
       POSTGRES_USER: ${POSTGRES_USER:-assistant}
@@ -136,37 +270,17 @@ services:
     networks:
       - data_net
 
-  neo4j:
-    <<: *service-defaults
-    image: neo4j:5.26-community
-    profiles: ["graph"]
-    environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-before-enabling-graph}
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1G
-      NEO4J_server_memory_pagecache_size: 512m
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-    volumes:
-      - neo4j_data:/data
-    ports:
-      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
-      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
-    networks:
-      - data_net
-
 volumes:
   postgres_data:
   redis_data:
   minio_data:
-  neo4j_data:
   generated_files:
+  searxng_cache:
 
 networks:
   edge_net:
   app_net:
   data_net:
+    internal: true
+  mcp_net:
     internal: true

@@ -4,38 +4,73 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>知伴 · 私人 AI 助理</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <title>知伴 · 懂你的 AI 视频工作室</title>
+  <link rel="stylesheet" href="/static/styles.css?v=1.6">
 </head>
 <body>
   <div id="auth-view" class="auth-shell">
     <section class="auth-visual">
       <div class="brand brand-light"><span class="brand-mark">知</span><span>知伴 AI</span></div>
       <div class="hero-copy">
-        <p class="eyebrow">YOUR PERSONAL INTELLIGENCE</p>
-        <h1>把琐事交给 AI，<br>把时间留给自己。</h1>
-        <p>一个会成长的私人助理，帮你规划、检索、整理知识，也陪你聊聊天。</p>
-        <div class="hero-chips"><span>行程规划</span><span>知识问答</span><span>文档理解</span></div>
+        <p class="eyebrow">KNOWLEDGE × CREATION</p>
+        <h1>更懂你的喜好，<br>拍出你的故事。</h1>
+        <p>从创意到成片：记住你的创作偏好，帮你写故事、做分镜、生成声画、制作字幕，并一起验收作品。</p>
+        <div class="hero-chips"><span>创作偏好</span><span>分镜确认</span><span>视频交付</span></div>
       </div>
       <div class="orb orb-one"></div><div class="orb orb-two"></div>
     </section>
     <section class="auth-panel">
       <div class="auth-card">
         <div class="mobile-brand brand"><span class="brand-mark">知</span><span>知伴 AI</span></div>
-        <p class="eyebrow purple">WELCOME BACK</p>
-        <h2 id="auth-title">登录你的助理</h2>
-        <p id="auth-subtitle" class="muted">继续上次的对话和计划</p>
-        <div class="auth-tabs" role="tablist">
-          <button id="login-tab" class="active" type="button">登录</button>
-          <button id="register-tab" type="button">注册</button>
+        <div id="standard-auth">
+          <p class="eyebrow purple">WELCOME BACK</p>
+          <h2 id="auth-title">进入视频工作室</h2>
+          <p id="auth-subtitle" class="muted">继续你的故事和作品</p>
+          <div class="auth-tabs" role="tablist">
+            <button id="login-tab" class="active" type="button">登录</button>
+            <button id="register-tab" type="button">注册</button>
+          </div>
+          <form id="auth-form">
+            <label>邮箱<input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label>
+            <label>密码<input id="password" name="password" type="password" autocomplete="current-password" placeholder="至少 8 个字符" minlength="8" required></label>
+            <label id="email-code-group" class="hidden">邮箱验证码
+              <span class="field-action"><input id="email-code" inputmode="numeric" maxlength="6" placeholder="6 位验证码"><button id="send-email-code" type="button">发送验证码</button></span>
+            </label>
+            <label id="auth-captcha-group">验证码
+              <span class="captcha-row"><input id="captcha-answer" inputmode="numeric" autocomplete="off" placeholder="输入计算结果" required><button id="captcha-question" type="button" title="点击刷新">加载中…</button></span>
+            </label>
+            <button id="forgot-password" class="text-link login-only" type="button">忘记密码？</button>
+            <p id="register-tip" class="form-tip hidden">每天最多注册 3 位用户，邮箱验证通过后才能注册。</p>
+            <button id="auth-submit" class="primary-btn wide" type="submit">进入知伴</button>
+          </form>
+          <p class="agreement">登录或注册即表示你同意合理使用服务，AI 内容请注意核验。</p>
         </div>
-        <form id="auth-form">
-          <label>邮箱<input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label>
-          <label>密码<input id="password" name="password" type="password" autocomplete="current-password" placeholder="至少 8 个字符" minlength="8" required></label>
-          <p id="register-tip" class="form-tip hidden">每日开放 3 个注册名额，注册成功后即可登录。</p>
-          <button id="auth-submit" class="primary-btn wide" type="submit">进入知伴</button>
-        </form>
-        <p class="agreement">登录或注册即表示你同意合理使用服务，AI 内容请注意核验。</p>
+
+        <div id="reset-request-view" class="hidden">
+          <p class="eyebrow purple">PASSWORD RECOVERY</p>
+          <h2>找回密码</h2>
+          <p class="muted">输入注册邮箱，我们会发送一次性重置链接</p>
+          <form id="reset-request-form">
+            <label>邮箱<input id="reset-email" type="email" autocomplete="email" placeholder="name@example.com" required></label>
+            <label>验证码
+              <span class="captcha-row"><input id="reset-captcha-answer" inputmode="numeric" autocomplete="off" placeholder="输入计算结果" required><button id="reset-captcha-question" type="button" title="点击刷新">加载中…</button></span>
+            </label>
+            <button class="primary-btn wide" type="submit">发送重置链接</button>
+          </form>
+          <button class="back-link" data-back-login type="button">返回登录</button>
+        </div>
+
+        <div id="reset-confirm-view" class="hidden">
+          <p class="eyebrow purple">SET NEW PASSWORD</p>
+          <h2>设置新密码</h2>
+          <p class="muted">重置链接仅能使用一次，请设置 8–128 位新密码</p>
+          <form id="reset-confirm-form">
+            <label>新密码<input id="reset-password" type="password" autocomplete="new-password" minlength="8" required></label>
+            <label>确认新密码<input id="reset-password-confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+            <button class="primary-btn wide" type="submit">确认重置密码</button>
+          </form>
+          <button class="back-link" data-back-login type="button">返回登录</button>
+        </div>
       </div>
     </section>
   </div>
@@ -43,21 +78,42 @@
   <div id="app-view" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">知</span><span>知伴 AI</span></div>
-      <button id="new-chat" class="new-chat" type="button">＋ 新建对话</button>
-      <p class="section-label">最近对话</p>
-      <div id="history-list" class="history-list">
-        <button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>
+      <nav class="mode-nav" aria-label="工作区">
+        <button class="mode-nav-item active" type="button" data-workspace="chat">
+          <span class="mode-icon">◇</span><span><strong>创意对话</strong><small>聊灵感、风格与修改意见</small></span>
+        </button>
+        <button class="mode-nav-item" type="button" data-workspace="studio">
+          <span class="mode-icon">▶</span><span><strong>视频工作室</strong><small>从创意到你满意的作品</small></span>
+        </button>
+      </nav>
+      <div id="chat-sidebar-context" class="sidebar-context">
+        <button id="new-chat" class="new-chat" type="button">＋ 新建对话</button>
+        <p class="section-label">最近对话</p>
+        <div id="history-list" class="history-list">
+          <button class="history-item active" type="button"><span>✦</span><span>新的对话</span></button>
+        </div>
       </div>
-      <div class="sidebar-footer"><span class="status-dot"></span> 服务运行正常</div>
+      <div id="studio-sidebar-context" class="sidebar-context hidden">
+        <button id="new-project" class="new-project" type="button">＋ 新建短剧项目</button>
+        <p class="section-label">导演项目</p>
+        <div id="director-project-list" class="project-list">
+          <button class="project-item" type="button" disabled>
+            <span class="project-cover">…</span>
+            <span><strong>正在读取项目</strong><small>请稍候</small></span>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-footer"><span class="status-dot"></span> 总导演编排器 + 4 位执行 Agent</div>
     </aside>
+    <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="关闭侧边栏"></button>
 
     <main class="workspace">
       <header class="topbar">
-        <button id="mobile-menu" class="icon-btn mobile-only" type="button">☰</button>
-        <div><strong>私人 AI 助理</strong><span class="version">v0.2</span></div>
+        <button id="mobile-menu" class="icon-btn mobile-only" type="button" aria-label="打开项目列表" aria-expanded="false">☰</button>
+        <div class="workspace-title"><strong id="workspace-title">视频工作室</strong><span id="workspace-subtitle">从创意到成片</span></div>
         <div class="top-actions">
-          <button id="points-btn" class="points-pill" type="button">◆ <span id="points-value">0</span> 积分</button>
-          <button id="checkin-btn" class="outline-btn" type="button">签到 +100</button>
+          <button id="creative-preferences-btn" class="memory-pill" type="button">✦ 创作偏好</button>
+          <button id="memory-btn" class="outline-btn" type="button">创作记忆</button>
           <div class="profile-wrap">
             <button id="profile-btn" class="avatar" type="button">U</button>
             <div id="profile-menu" class="profile-menu hidden">
@@ -68,42 +124,336 @@
         </div>
       </header>
 
-      <section class="chat-area">
+      <section id="chat-workspace" class="chat-area">
         <div id="messages" class="messages">
           <div class="welcome-block">
             <div class="assistant-logo">知</div>
             <h2>你好，我是知伴</h2>
-            <p>今天想让我帮你做什么？</p>
+            <p>和我聊想拍的故事、喜欢的镜头和不喜欢的风格。稳定的创作偏好会帮助下一次制作，本次要求始终优先。</p>
+            <div class="knowledge-flow" aria-label="对话知识沉淀流程">
+              <div><span>聊</span><strong>自然对话</strong><small>想法与素材</small></div>
+              <i>→</i>
+              <div><span>理</span><strong>会话整理</strong><small>自动提炼与归类</small></div>
+              <i>→</i>
+              <div><span>存</span><strong>双重持久化</strong><small>向量记忆 + 知识图谱</small></div>
+            </div>
             <div class="prompt-grid">
-              <button type="button" data-prompt="帮我规划一个三天两夜的周末旅行">🧭 规划一次周末旅行</button>
-              <button type="button" data-prompt="帮我整理今天最重要的三件事">✓ 整理今日待办</button>
-              <button type="button" data-prompt="给我讲一个轻松有趣的笑话">☺ 讲个笑话放松一下</button>
-              <button type="button" data-prompt="帮我生成一份 Markdown 格式的本周工作计划文件">▤ 生成一份计划文件</button>
+              <button type="button" data-prompt="我想拍一条短片，请通过几个简短问题帮我明确主题、受众和情绪。">✦ 一起打磨创意</button>
+              <button type="button" data-prompt="我想告诉你我的视频创作喜好，请帮我整理视觉风格、叙事节奏和声音偏好。">◇ 让你更懂我的喜好</button>
+              <button type="button" data-prompt="请把我上传的剧本整理成故事节拍，指出适合拍摄的镜头和对白。">📎 分析剧本素材</button>
               <button type="button" data-prompt="生成一个 4 秒的视频：清晨阳光下的山间湖泊，电影感镜头">▶ 生成一段短视频</button>
+              <button type="button" data-prompt="请启动导演工作室，制作一部有对白和中文字幕的 60 秒、9:16、电影感写实短剧。故事创意：">🎬 启动导演团队</button>
               <button type="button" data-prompt="介绍一下你目前能帮助我做什么">✦ 了解你的能力</button>
             </div>
           </div>
         </div>
         <div class="composer-wrap">
-          <p id="model-status" class="model-status">由运营后台当前启用的大模型渠道提供回答</p>
+          <div class="capture-status" aria-live="polite">
+            <span class="capture-mark">◎</span>
+            <div><strong>创作记忆</strong><small id="session-memory-status">整理长期创作偏好；虚构剧情不作为你的个人经历</small></div>
+            <button id="organize-session" type="button" disabled>结束并整理</button>
+          </div>
+          <div class="model-picker">
+            <label for="model-select">本次使用</label>
+            <select id="model-select" aria-label="选择大模型" disabled>
+              <option value="">正在加载模型列表…</option>
+            </select>
+            <input id="model-custom" class="hidden" maxlength="200" aria-label="输入自定义模型 ID" placeholder="输入自定义模型 ID">
+            <button id="refresh-models" type="button" title="刷新模型列表">↻</button>
+            <span id="skill-status" class="skill-status checking">文档 Skill 检查中…</span>
+          </div>
+          <div id="attachment-tray" class="attachment-tray hidden" aria-live="polite"></div>
           <form id="chat-form" class="composer">
-            <textarea id="chat-input" rows="1" maxlength="8000" placeholder="问我任何事情，Enter 发送，Shift + Enter 换行"></textarea>
+            <input id="attachment-input" class="hidden" type="file" multiple accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.json,.html">
+            <button id="attach-btn" class="attach-button" type="button" aria-label="上传附件" title="上传 PDF、Word、PPT、Excel 或文本">⌕</button>
+            <textarea id="chat-input" rows="1" maxlength="8000" placeholder="聊聊想拍的故事、喜欢的风格，或这次想怎么改…"></textarea>
             <button id="send-btn" type="submit" aria-label="发送">↑</button>
           </form>
           <p class="ai-note">AI 生成内容仅供参考，请核验重要信息</p>
         </div>
       </section>
+
+      <section id="studio-workspace" class="studio-area hidden" aria-label="AI 短剧导演工作室">
+        <div class="studio-scroll">
+          <nav class="studio-view-tabs" aria-label="导演工作室视图">
+            <button class="active" type="button" data-studio-view="production" aria-pressed="true"><span>⌁</span> 制作台</button>
+            <button type="button" data-studio-view="library" aria-pressed="false"><span>▣</span> 作品库 <em id="video-library-count">—</em></button>
+          </nav>
+
+          <div id="studio-production-view" class="studio-view-panel">
+          <header class="production-header">
+            <div>
+              <div id="production-kicker" class="production-kicker"><span class="live-dot"></span> DIRECTOR PROJECT</div>
+              <h1 id="production-title">等待选择导演项目</h1>
+              <p id="production-meta">从对话启动完整成片，或在工作室先生成首镜预览</p>
+            </div>
+            <div class="production-actions">
+              <button id="start-director-project" class="ghost-btn" type="button">＋ 开始制作</button>
+              <button id="one-click-movie" class="studio-primary" type="button">▶ 一键成片</button>
+              <button id="studio-guide" class="ghost-btn guide-btn" type="button">？ 使用指南</button>
+              <button id="project-settings" class="ghost-btn" type="button">制作设定</button>
+              <button id="project-sound" class="ghost-btn" type="button" disabled>♫ 配音、字幕与配乐</button>
+              <button id="continue-production" class="studio-primary" type="button">继续制作 <span>→</span></button>
+            </div>
+          </header>
+
+          <section class="creative-context-panel" aria-label="本片创作依据">
+            <h2>这部作品如何参考你的喜好</h2>
+            <div id="project-personalization">新建项目时，会保存本次使用的偏好和相关记忆。</div>
+            <div id="project-output"></div>
+            <button id="project-feedback-btn" class="ghost-btn hidden" type="button">验收作品与反馈</button>
+            <p id="project-feedback-status"></p>
+          </section>
+          <section id="storyboard-review-panel" class="creative-context-panel hidden">
+            <h2>生成前核对故事与分镜</h2>
+            <p>核对下方故事、逐镜画面和对白；确认后才提交视频任务。需要修改可保存为新草案。</p>
+            <div id="storyboard-review-content"></div>
+            <button id="approve-storyboard-btn" class="studio-primary" type="button">确认分镜并生成视频</button>
+            <button id="revise-storyboard-btn" class="ghost-btn" type="button">修改为新草案</button>
+          </section>
+
+          <section class="director-brief" aria-labelledby="director-heading">
+            <div class="director-avatar"><span>总</span><i></i></div>
+            <div class="director-copy">
+              <div class="agent-label"><span>总导演编排器 · 4 位执行 Agent</span><span id="director-working-badge" class="working-badge">正在统筹</span></div>
+              <h2 id="director-heading">等待导演项目</h2>
+              <p id="director-summary">总导演编排器负责真实调度；故事、视觉、媒体制作和质检 Agent 的状态会在这里持续更新。</p>
+            </div>
+            <div class="director-progress"><strong>42%</strong><span id="director-progress-label">本次任务进度</span><div><i></i></div></div>
+          </section>
+
+          <details class="production-details"><summary>查看制作过程、专业记录与角色设定</summary>
+          <section class="pipeline-section" aria-labelledby="pipeline-heading">
+            <div class="section-heading">
+              <div><span class="section-index">01</span><div><h2 id="pipeline-heading">4 位执行 Agent · 真实生产链</h2><p>结构化交付、媒体工具执行和技术质检均由后端持久化</p></div></div>
+              <div class="pipeline-legend"><span><i class="done"></i>已通过</span><span><i class="active"></i>进行中</span><span><i></i>待开始</span></div>
+            </div>
+            <div class="agent-org" aria-label="总导演编排器与四位执行 Agent 的协作关系">
+              <div class="org-director"><span>总</span><div><strong>总导演编排器</strong><small>用户确认 · 文本预演 · 90 分否决门禁</small><b>Python workflow</b></div><em>1 个</em></div>
+              <div class="org-bridge"><span>结构化规划</span><i>→</i><span>总导演预演</span><i>→</i><span>真实生成与质检</span></div>
+              <div class="org-gates">
+                <div data-org-stage="story"><span>文</span><strong>故事 Agent</strong><small>人物、节拍与对白</small><em data-agent-model="story">匹配中…</em></div>
+                <div data-org-stage="visual"><span>镜</span><strong>视觉 Agent</strong><small>资产、分镜与字幕</small><em data-agent-model="visual">匹配中…</em></div>
+                <div data-org-stage="media"><span>制</span><strong>媒体制作 Agent</strong><small>视频、语音与合成</small><em data-agent-model="media">工具执行</em></div>
+                <div data-org-stage="quality"><span>审</span><strong>质检 Agent</strong><small>音轨、字幕与时长</small><em data-agent-model="quality">规则质检</em></div>
+              </div>
+            </div>
+            <div id="agent-pipeline" class="agent-pipeline" role="list" aria-label="短剧制作流程">
+              <button class="pipeline-stage" type="button" data-stage="story" aria-pressed="false"><span class="stage-number">阶段 01</span><span class="stage-icon">文</span><strong>故事与对白</strong><small>故事 Agent · 结构化交付</small><b>产出：人物 / 节拍 / 剧本</b><em>待开始</em></button>
+              <button class="pipeline-stage" type="button" data-stage="visual" aria-pressed="true"><span class="stage-number">阶段 02</span><span class="stage-icon">镜</span><strong>视觉与总导演预演</strong><small>视觉 Agent · 至少两轮文本复核</small><b>门禁：提示词评分 ≥ 90</b><em>待开始</em></button>
+              <button class="pipeline-stage" type="button" data-stage="media" aria-pressed="false"><span class="stage-number">阶段 03</span><span class="stage-icon">制</span><strong>媒体生成</strong><small>媒体 Agent · 工具执行</small><b>执行：视频 / 语音 / 字幕</b><em>等待上游</em></button>
+              <button class="pipeline-stage" type="button" data-stage="quality" aria-pressed="false"><span class="stage-number">阶段 04</span><span class="stage-icon">审</span><strong>真实质检</strong><small>质检 Agent · 否决门禁</small><b>检查：画面 / 音轨 / 字幕 / 时长</b><em>等待上游</em></button>
+            </div>
+          </section>
+
+          <div class="production-grid">
+            <section class="stage-workbench" aria-labelledby="stage-title">
+              <div class="workbench-header">
+                <div class="agent-identity"><div id="stage-avatar" class="stage-avatar">文</div><div><div id="stage-role" class="agent-label">故事 AGENT · 等待项目</div><h2 id="stage-title">启动项目后展示真实 Agent 交付</h2></div></div>
+                <span id="stage-status" class="stage-status">尚未启动</span>
+              </div>
+              <div class="decision-block">
+                <div class="decision-heading"><span>◌</span><strong>判断摘要</strong><small>当前项目记录</small></div>
+                <p id="stage-summary">这里会展示后端持久化的判断摘要、结构化交付和工具执行状态。</p>
+                <div id="stage-evidence" class="evidence-list">
+                  <span><i>✓</i> 结构化 JSON 校验</span>
+                  <span><i>✓</i> 视频与语音渠道真实任务</span>
+                  <span><i>✓</i> FFmpeg 与 ffprobe 媒体证据</span>
+                </div>
+              </div>
+              <div id="stage-deliverable" class="deliverable-row">
+                <div><span>当前交付物</span><strong>等待真实项目</strong><small>项目启动后自动同步</small></div>
+                <button id="view-deliverable" type="button">查看画板 ↗</button>
+              </div>
+              <div class="approval-row"><span>阶段状态由后端真实任务、结构校验和媒体质检驱动。</span></div>
+            </section>
+
+            <aside class="context-panel" aria-labelledby="context-heading">
+              <div class="context-header"><div><span class="section-index">02</span><h2 id="context-heading">连续性记忆</h2></div><span>自动同步</span></div>
+              <div class="continuity-score"><div><strong id="continuity-score-value">—</strong><span>/ 100</span></div><p id="continuity-score-label">等待连续性建档</p><i><b id="continuity-score-bar"></b></i></div>
+              <div class="context-group"><h3>角色连续性圣经</h3><div id="continuity-assets" class="asset-stack">
+                <button type="button"><span class="asset-thumb person-one">角</span><span><strong>等待资产 Agent 建档</strong><small>外貌 / 服装 / 声线 / 定妆照</small></span><em>WAIT</em></button>
+              </div></div>
+              <div id="continuity-relationships" class="context-group guardrails"><h3>人物关系</h3><p><span>—</span>项目启动后自动同步主角、配角和人物关系</p></div>
+            </aside>
+          </div>
+
+          </details>
+          <section class="shot-board" aria-labelledby="shot-heading">
+            <div class="section-heading compact"><div><span class="section-index">03</span><div><h2 id="shot-heading">分镜画板</h2><p>等待当前项目分镜</p></div></div><button id="show-all-shots" class="text-action" type="button">查看全部镜头 →</button></div>
+            <div id="director-shot-strip" class="shot-strip">
+              <div class="video-gallery-empty"><span>镜</span><strong>等待当前项目分镜</strong><small>视觉 Agent 生成后会自动同步</small></div>
+            </div>
+          </section>
+          </div>
+
+          <section id="studio-library-view" class="video-gallery video-library studio-view-panel hidden" aria-labelledby="video-gallery-heading">
+            <header class="video-library-header">
+              <div><p class="eyebrow purple">VIDEO LIBRARY</p><h1 id="video-gallery-heading">视频作品库</h1><p id="video-gallery-summary">正在读取你的历史成片与镜头记录</p></div>
+              <button id="refresh-video-gallery" class="ghost-btn" type="button">刷新作品 ↻</button>
+            </header>
+            <div class="video-library-filters" role="group" aria-label="筛选视频作品">
+              <button class="active" type="button" data-video-library-filter="all">全部</button>
+              <button type="button" data-video-library-filter="final">完整成片</button>
+              <button type="button" data-video-library-filter="clip">镜头片段</button>
+              <button type="button" data-video-library-filter="failed">失败记录</button>
+            </div>
+            <div id="video-gallery-list" class="video-gallery-list" aria-live="polite">
+              <div class="video-gallery-empty"><span>▶</span><strong>正在加载生成记录</strong><small>完成后可以在这里直接播放和下载 MP4</small></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <nav class="mobile-mode-nav" aria-label="手机端主导航">
+        <button class="active" type="button" data-workspace="chat"><span>◇</span><strong>创意对话</strong></button>
+        <button type="button" data-workspace="studio"><span>▶</span><strong>视频工作室</strong></button>
+        <button id="mobile-memory-btn" type="button"><span>⌘</span><strong>创作记忆</strong></button>
+      </nav>
     </main>
   </div>
 
-  <dialog id="packages-dialog" class="modal">
-    <div class="modal-header"><div><p class="eyebrow purple">POINTS CENTER</p><h2>积分套餐</h2></div><button class="close-btn" type="button">×</button></div>
-    <p class="muted">基础兑换比例为 1 元 = 100 积分，套餐包含额外赠送积分。</p>
-    <div id="package-list" class="package-list"></div>
-    <p class="payment-note">在线支付将在接入支付渠道后开放，当前可由运营人员调整积分。</p>
+  <dialog id="memory-dialog" class="modal memory-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">CREATIVE MEMORY</p><h2>我的创作记忆</h2></div>
+      <button id="memory-close" class="close-btn" type="button">×</button>
+    </div>
+    <p class="muted">创作对话中的稳定偏好和明确保存的作品反馈会帮助之后的制作。可删除不希望继续使用的记忆；旧项目保留当时参考的快照。</p>
+    <div class="knowledge-store-summary">
+      <div><span>◫</span><p><strong id="vector-memory-count">—</strong><small>条向量记忆</small></p><em>语义检索</em></div>
+      <div><span>⌘</span><p><strong id="graph-node-count">—</strong><small>个知识节点</small></p><em>关系推理</em></div>
+      <div><span>↗</span><p><strong id="graph-edge-count">—</strong><small>条实体关系</small></p><em>持续增长</em></div>
+    </div>
+    <div class="memory-layout">
+      <div><div class="knowledge-panel-title"><h3>个人图知识库</h3><span>可视化关系网络</span></div><div id="memory-graph" class="memory-graph"><p class="muted">正在加载图谱…</p></div></div>
+      <div><div class="knowledge-panel-title"><h3>向量记忆</h3><span>按相关性参与对话</span></div><div id="memory-items" class="memory-items"></div></div>
+    </div>
   </dialog>
 
+  <dialog id="director-start-dialog" class="modal director-start-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">NEW DIRECTOR PROJECT</p><h2>开始生成电影</h2></div>
+      <button id="director-start-close" class="close-btn" type="button" aria-label="关闭创建项目">×</button>
+    </div>
+    <p id="director-start-intro" class="director-start-intro">填写故事创意后，总导演编排器会调度 4 位执行 Agent，并生成带语音和烧录字幕的真实视频。</p>
+    <form id="director-start-form">
+      <label>故事创意与核心冲突
+        <textarea id="director-premise" rows="5" maxlength="8000" placeholder="例如：暴雨夜，末班公交上的女孩从车窗倒影里看见失联十年的朋友，但车已经启动……" required></textarea>
+      </label>
+      <label class="continuity-input">角色、关系与定妆锁定信息（可选，但强烈建议填写）
+        <textarea id="director-continuity-notes" rows="4" maxlength="8000" placeholder="例如：女主林夏，28 岁，齐肩黑发、左眼下泪痣，始终穿深蓝风衣，成年女性温暖声线；她与程野是十年前失联的恋人。如需指定克隆音色，可填写运营后台已验证的 voice_id。"></textarea>
+        <small>视觉 Agent 会把角色、关系、外貌、服装、声线和定妆照登记为连续性圣经，后续镜头和配音共用。</small>
+      </label>
+      <div class="director-form-grid">
+        <label>制作渠道
+          <select id="director-production-mode"><option value="whiteboard" selected>白板手绘（图片 + 旁白，本地合成）</option><option value="image_motion">图文动效（图片推拉平移 + 旁白，本地合成）</option><option value="video">动态视频（已配置视频渠道 / MiniMax）</option></select>
+        </label>
+        <label>目标时长
+          <select id="director-duration"><option value="4">4 秒试片</option><option value="30">30 秒</option><option value="60" selected>60 秒</option><option value="180">3 分钟</option><option value="300">5 分钟</option></select>
+        </label>
+        <label>画幅
+          <select id="director-ratio"><option value="9:16" selected>9:16 竖屏</option><option value="16:9">16:9 横屏</option></select>
+        </label>
+        <label>清晰度
+          <select id="director-resolution"><option value="768P" selected>标准清晰度</option><option value="2K">高清成片</option></select>
+        </label>
+        <label>视觉风格
+          <input id="director-style" maxlength="100" placeholder="留空使用创作偏好，例如：复古胶片">
+        </label>
+      </div>
+      <label class="director-confirm-option"><input id="director-use-memory" type="checkbox" checked><span>参考与本片相关的历史创作记忆（本次要求优先）</span></label>
+      <label class="director-confirm-option">
+        <input id="director-confirm-story" type="checkbox" checked>
+        <span><strong>先保存创意草案</strong><small>开启后先保存草案，确认后进行文本规划。不论是否开启，生成的视频分镜都需要你核对后再提交媒体任务。</small></span>
+      </label>
+      <div id="director-start-boundary" class="director-start-boundary"><strong>制作模式</strong><span>常规制作会完成多 Agent 预制作并生成第一个 4 秒预览镜头，方便逐镜确认。</span></div>
+      <div class="director-start-actions"><button id="director-start-cancel" class="ghost-btn" type="button">取消</button><button id="director-start-submit" class="studio-primary" type="submit">启动总导演编排器 + 4 位 Agent</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="director-approval-dialog" class="modal director-approval-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">DIRECTOR PREFLIGHT</p><h2 id="director-approval-title">确认故事并开始预演</h2></div>
+      <button id="director-approval-close" class="close-btn" type="button" aria-label="关闭确认窗口">×</button>
+    </div>
+    <p class="director-approval-intro">确认后开始故事与分镜规划。规划完成后会再次请你核对分镜；本次确认不会直接提交视频任务。</p>
+    <section class="director-approval-story" aria-labelledby="director-approval-story-label">
+      <strong id="director-approval-story-label">本次确认的故事</strong>
+      <p id="director-approval-story"></p>
+    </section>
+    <div class="director-approval-guardrails">
+      <div><span>文</span><p><strong>至少两轮文本预演</strong><small>先检查故事、分镜和视频提示词</small></p></div>
+      <div><span>90</span><p><strong>总导演否决门禁</strong><small>评分不足不会调用视频模型</small></p></div>
+      <div><span>影</span><p><strong id="director-approval-video-label">通过后生成视频</strong><small id="director-approval-video-detail">将显示清晰度和预计镜头数</small></p></div>
+    </div>
+    <p class="director-approval-warning">文本规划会使用模型额度。视频任务在规划通过且你确认具体分镜后才会提交。</p>
+    <div class="director-approval-actions"><button id="director-approval-cancel" class="ghost-btn" type="button">暂不开始</button><button id="director-approval-confirm" class="studio-primary" type="button">确认并开始文本预演 →</button></div>
+  </dialog>
+
+  <dialog id="studio-guide-dialog" class="modal studio-guide-modal">
+    <div class="modal-header">
+      <div><p class="eyebrow purple">DIRECTOR CONSOLE GUIDE</p><h2>短剧制作使用指南</h2></div>
+      <button id="studio-guide-close" class="close-btn" type="button" aria-label="关闭使用指南">×</button>
+    </div>
+    <p class="guide-intro">这套控制台展示真实执行状态：故事和视觉 Agent 交付结构化数据，媒体 Agent 调用视频与语音渠道并烧录字幕，质检 Agent 不通过时项目不会完成。</p>
+
+    <section id="video-readiness" class="video-readiness checking" aria-live="polite">
+      <span class="readiness-mark">…</span>
+      <div><strong id="video-readiness-title">正在检查真实生成条件</strong><p id="video-readiness-detail">确认是否已经同时启用视频和语音渠道。</p></div>
+      <button id="guide-refresh-status" type="button">重新检测</button>
+    </section>
+
+    <ol class="guide-steps">
+      <li><span>01</span><div><strong>选择“开始制作”或“一键成片”</strong><p>常规制作生成一个带语音和字幕的预览镜头；一键成片会逐镜生成、配音、烧录字幕并合片。</p></div></li>
+      <li><span>02</span><div><strong>故事与视觉结构化规划</strong><p>模型输出必须通过 JSON 校验；失败会自动重试，而不是把空文本流入下游。</p></div></li>
+      <li><span>03</span><div><strong>原生声画优先、外部语音兜底</strong><p>MiniMax H3 镜头优先保留同步对白、情绪、音效与配乐；没有原生音轨时才调用语音渠道，并按对白时间窗烧录中文字幕。</p></div></li>
+      <li><span>04</span><div><strong>技术质检拥有否决权</strong><p>系统检查每镜和最终合片的视频轨、音轨、字幕标记和时长；未通过时项目标记失败。</p></div></li>
+    </ol>
+
+    <section class="guide-controls">
+      <h3>页面按钮怎么用</h3>
+      <div><strong>继续制作</strong><span>回到当前正在处理的门禁和交付物。</span></div>
+      <div><strong>连续性圣经</strong><span>统一记录主角、配角、人物关系、外貌、服装、声线和定妆参考，所有 Agent 与镜头共用。</span></div>
+      <div><strong>一键成片</strong><span>显示预计片段数并二次确认额度，再由 4 位执行 Agent 自动生成、配音、加字幕和合片。</span></div>
+      <div><strong>点击门禁</strong><span>查看对应 Agent 的思考摘要、依据与验收结果。</span></div>
+      <div><strong>查看画板</strong><span>核对镜头构图、时长、运镜和相邻镜头关系。</span></div>
+      <div><strong>阶段状态</strong><span>只反映后端已持久化的真实执行结果，不再由页面按钮伪造。</span></div>
+    </section>
+
+    <div class="guide-boundary"><strong>也可以从聊天启动</strong><p>直接说：“请启动导演工作室，制作一部有对白和字幕的 60 秒、9:16 短剧。故事创意：……”系统会创建同样的持久化项目。</p></div>
+    <div class="guide-actions"><button id="guide-go-chat" class="ghost-btn" type="button">去知识对话准备镜头指令</button><button id="studio-guide-done" class="studio-primary" type="button">我知道怎么用了</button></div>
+  </dialog>
+
+  <dialog id="creative-preferences-dialog" class="modal director-start-modal">
+    <div class="modal-header"><h2>我的创作偏好</h2><button class="close-btn" type="button" data-close-dialog="creative-preferences-dialog" aria-label="关闭创作偏好">×</button></div>
+    <p>作为新作品的默认参考。本次明确要求优先，已创建项目保留当时的偏好快照。</p>
+    <form id="creative-preferences-form">
+      <label>视觉风格<input name="visual_style" maxlength="100" placeholder="例如：自然光、复古胶片"></label>
+      <label>常用受众<input name="audience" maxlength="300" placeholder="例如：喜欢治愈故事的年轻观众"></label>
+      <label>叙事与情绪<textarea name="narrative_tone" maxlength="500" placeholder="例如：克制、温暖，结尾留白"></textarea></label>
+      <label>剪辑节奏<input name="pacing" maxlength="300" placeholder="例如：舒缓，少用快速切镜"></label>
+      <label>声音与字幕<textarea name="sound" maxlength="500" placeholder="例如：自然对白、低音量配乐、简洁中文字幕"></textarea></label>
+      <label>不喜欢的元素<textarea name="avoid" maxlength="1000" placeholder="例如：夸张旁白、过度煽情"></textarea></label>
+      <label class="director-confirm-option"><input name="use_memory" type="checkbox"><span>新项目默认参考历史创作记忆</span></label>
+      <button class="studio-primary" type="submit">保存偏好</button>
+    </form>
+  </dialog>
+  <dialog id="creative-feedback-dialog" class="modal director-start-modal">
+    <div class="modal-header"><h2>作品验收</h2><button class="close-btn" type="button" data-close-dialog="creative-feedback-dialog" aria-label="关闭作品验收">×</button></div>
+    <p>请观看作品后判断：人物、对白、字幕、节奏是否符合预期。技术检查通过不代表内容已经满意。</p>
+    <form id="creative-feedback-form">
+      <label>验收结果<select name="verdict"><option value="accepted">我满意，可以交付</option><option value="needs_changes">还需要修改</option></select></label>
+      <label>贴合我的喜好程度<select name="rating"><option value="5">5 · 很贴合</option><option value="4">4</option><option value="3" selected>3 · 一般</option><option value="2">2</option><option value="1">1 · 不贴合</option></select></label>
+      <label>这部作品的反馈<textarea name="notes" maxlength="2000" placeholder="哪里满意、哪里需要调整"></textarea></label>
+      <label class="director-confirm-option"><input name="remember" type="checkbox"><span>把下面的偏好用于今后的作品</span></label>
+        <label>希望今后记住什么（勾选后必填）<textarea name="reusable_preference" maxlength="1000" aria-describedby="creative-feedback-error" placeholder="例如：今后视频对白停顿长一些，配乐再轻一点"></textarea></label>
+        <p>评分和本片意见不会自动变成长期偏好；只有勾选并填写的内容会被记住。</p>
+        <p id="creative-feedback-error" role="alert" class="form-error hidden"></p>
+      <button class="studio-primary" type="submit">保存验收反馈</button>
+    </form>
+  </dialog>
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js" defer></script>
+    <script src="/static/activity.js?v=1.0" defer></script>
+    <script src="/static/app.js?v=1.12" defer></script>
 </body>
 </html>

@@ -3,12 +3,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -24,6 +29,10 @@ from assistant_app.db.base import Base
 
 class User(Base):
     __tablename__ = "users"
+
+    creative_preferences: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
@@ -41,6 +50,27 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RequestLog(Base):
+    __tablename__ = "request_logs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(320), index=True)
+    method: Mapped[str | None] = mapped_column(String(16))
+    path: Mapped[str | None] = mapped_column(String(500), index=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, index=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    model_name: Mapped[str | None] = mapped_column(String(200), index=True)
+    input_payload: Mapped[str | None] = mapped_column(Text)
+    output_payload: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
 
 
 class DailyCheckin(Base):
@@ -101,7 +131,6 @@ class ModelChannel(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     qps_limit: Mapped[int] = mapped_column(
         Integer, nullable=False, default=2, server_default=text("2")
@@ -124,6 +153,9 @@ class VideoChannel(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="openai", server_default=text("'openai'")
+    )
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     qps_limit: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default=text("1")
@@ -134,8 +166,101 @@ class VideoChannel(Base):
     default_size: Mapped[str] = mapped_column(
         String(20), nullable=False, default="1280x720", server_default=text("'1280x720'")
     )
+    default_resolution: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="768P", server_default=text("'768P'")
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MusicChannel(Base):
+    __tablename__ = "music_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qps_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    default_format: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="mp3", server_default=text("'mp3'")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SpeechChannel(Base):
+    __tablename__ = "speech_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    default_voice_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qps_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    default_format: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="mp3", server_default=text("'mp3'")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ImageChannel(Base):
+    __tablename__ = "image_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qps_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EmailChannel(Base):
+    __tablename__ = "email_channels"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="163 SMTP")
+    smtp_host: Mapped[str] = mapped_column(String(255), nullable=False, default="smtp.163.com")
+    smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=465)
+    smtp_username: Mapped[str] = mapped_column(String(320), nullable=False)
+    encrypted_auth_code: Mapped[str] = mapped_column(Text, nullable=False)
+    from_name: Mapped[str] = mapped_column(String(100), nullable=False, default="知伴 AI")
+    use_ssl: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -162,6 +287,8 @@ class GeneratedFile(Base):
 
 
 class VideoJob(Base):
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "video_jobs"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -176,6 +303,9 @@ class VideoJob(Base):
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
     seconds: Mapped[str] = mapped_column(String(8), nullable=False)
     size: Mapped[str] = mapped_column(String(20), nullable=False)
+    resolution: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="768P", server_default=text("'768P'")
+    )
     storage_path: Mapped[str | None] = mapped_column(String(500))
     error_message: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
@@ -183,4 +313,378 @@ class VideoJob(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DirectorProject(Base):
+    postproduction: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    # Legacy rows remain video; the creation service defaults new projects to whiteboard.
+    production_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="video", server_default=text("'video'")
+    )
+    __tablename__ = "director_projects"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('awaiting_confirmation', 'awaiting_storyboard', "
+            "'queued', 'processing', 'completed', 'failed')",
+            name="ck_director_project_status",
+        ),
+    )
+
+    personalization: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    feedback: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    review_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    storyboard_approved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    premise: Mapped[str] = mapped_column(Text, nullable=False)
+    target_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
+    resolution: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="768P", server_default=text("'768P'")
+    )
+    visual_style: Mapped[str] = mapped_column(String(100), nullable=False)
+    continuity_notes: Mapped[str | None] = mapped_column(Text)
+    continuity_bible: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    one_click: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    planned_shots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    completed_shots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="queued", server_default=text("'queued'")
+    )
+    current_stage: Mapped[str | None] = mapped_column(String(32))
+    progress: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    final_summary: Mapped[str | None] = mapped_column(Text)
+    quality_report: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    preview_video_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
+    )
+    final_video_path: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DirectorAgentRun(Base):
+    __tablename__ = "director_agent_runs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_key", name="uq_director_project_agent"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("director_projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    agent_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    decision_summary: Mapped[str | None] = mapped_column(Text)
+    deliverable: Mapped[str | None] = mapped_column(Text)
+    result_data: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DirectorShot(Base):
+    image_path: Mapped[str | None] = mapped_column(String(500))
+    image_source: Mapped[str | None] = mapped_column(String(20))
+    image_channel_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("image_channels.id", ondelete="RESTRICT")
+    )
+    image_submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __tablename__ = "director_shots"
+    __table_args__ = (
+        UniqueConstraint("project_id", "sequence", name="uq_director_project_shot"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("director_projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    seconds: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    video_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL")
+    )
+    speech_job_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("speech_jobs.id", ondelete="SET NULL")
+    )
+    speaker: Mapped[str | None] = mapped_column(String(100))
+    speech_text: Mapped[str | None] = mapped_column(Text)
+    subtitle_text: Mapped[str | None] = mapped_column(Text)
+    rendered_path: Mapped[str | None] = mapped_column(String(500))
+    continuity_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MusicJob(Base):
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __tablename__ = "music_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("music_channels.id", ondelete="RESTRICT"), index=True
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    lyrics: Mapped[str | None] = mapped_column(Text)
+    is_instrumental: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
+    provider_job_id: Mapped[str | None] = mapped_column(String(255))
+    audio_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SpeechJob(Base):
+    timing: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    submission_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __tablename__ = "speech_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("speech_channels.id", ondelete="RESTRICT"), index=True
+    )
+    speech_text: Mapped[str] = mapped_column(Text, nullable=False)
+    voice_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    speaker: Mapped[str | None] = mapped_column(String(100))
+    voice_role: Mapped[str | None] = mapped_column(String(32))
+    emotion: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="calm", server_default=text("'calm'")
+    )
+    speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
+    audio_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    artifacts: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    channel_name: Mapped[str | None] = mapped_column(String(100))
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
+class MemoryItem(Base):
+    __tablename__ = "memory_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "content_hash", name="uq_memory_user_content_hash"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_message_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("conversation_messages.id", ondelete="SET NULL")
+    )
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence: Mapped[float] = mapped_column(
+        nullable=False, default=0.7, server_default=text("0.7")
+    )
+    importance: Mapped[float] = mapped_column(
+        nullable=False, default=0.5, server_default=text("0.5")
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="active", server_default=text("'active'")
+    )
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    extra_data: Mapped[dict[str, object]] = mapped_column(
+        "metadata", JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class WorkItem(Base):
+    __tablename__ = "work_items"
+    __table_args__ = (UniqueConstraint("kind", "resource_id", name="uq_work_resource"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    owner: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ChatRun(Base):
+    __tablename__ = "chat_runs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_chat_idempotency"),
+        Index("uq_chat_active_user", "user_id", unique=True,
+              postgresql_where=text("status = 'processing'")),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"))
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
+    response: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    error_status: Mapped[int | None] = mapped_column(Integer)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MemoryEmbedding(Base):
+    __tablename__ = "memory_embeddings"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "embedding_model", name="uq_memory_embedding_model"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    memory_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("memory_items.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

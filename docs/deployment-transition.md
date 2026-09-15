@@ -36,7 +36,7 @@ bash scripts/server_preflight.sh
 - `18000`、`9000`、`9001` 未被占用；
 - 如果准备启用 Caddy，确认宿主机 `80/443` 未被其他进程或容器占用；
 - Docker Compose v2 可用；
-- 云安全组不开放 PostgreSQL、Redis、MinIO、Neo4j 的数据端口。
+- 云安全组不开放 PostgreSQL、Redis、MinIO 的数据端口。
 
 当前 `deploy-mailpit-1` 的 SMTP `1025` 和 Web `8025` 绑定在 `0.0.0.0`。如果这些测试服务不需要公网访问，应立即通过云安全组限制来源；正式切换后停止 Mailpit。
 
@@ -53,10 +53,11 @@ chmod 600 .env
 ASSISTANT_ENVIRONMENT=production
 ASSISTANT_LOG_JSON=true
 ASSISTANT_API_PORT=18000
-ASSISTANT_GRAPH_ENABLED=false
+ASSISTANT_MEMORY_ENABLED=true
+ASSISTANT_MEMORY_EMBEDDING_MODEL=
 ```
 
-先启动不含 Neo4j 和公网入口的基础栈：
+启动不含公网数据库端口的基础栈：
 
 ```bash
 docker compose up -d --build
@@ -71,12 +72,7 @@ curl --fail http://127.0.0.1:18000/api/v1/health/ready
 docker compose logs --tail=200 assistant-api
 ```
 
-基础栈稳定后再启用 Neo4j：
-
-```bash
-docker compose --profile graph up -d
-docker compose ps
-```
+Apache AGE 与 pgvector 已内置在 PostgreSQL 16 镜像中，不再启动独立图数据库。
 
 ## 5. 入口切换
 
@@ -117,4 +113,3 @@ docker start deploy-api-1 deploy-web-1 deploy-mailpit-1
 ```
 
 然后将域名或反向代理恢复到旧入口。回滚确认完成前，不执行 `docker compose down -v`、`docker rm` 或卷删除。
-

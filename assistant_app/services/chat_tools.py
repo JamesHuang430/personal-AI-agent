@@ -51,7 +51,7 @@ class SpeechArguments(Arguments):
 
 
 class DirectorArguments(Arguments):
-    production_mode: Literal["whiteboard", "video"] = "whiteboard"
+    production_mode: Literal["whiteboard", "image_motion", "video"] = "whiteboard"
     premise: str = Field(min_length=4, max_length=8000)
     target_seconds: Literal[4, 30, 60, 180, 300] = 60
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"

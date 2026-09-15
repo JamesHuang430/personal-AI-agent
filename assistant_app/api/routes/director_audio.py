@@ -137,7 +137,7 @@ async def audition(
             raise HTTPException(429, "试听请求过多，请一分钟后重试")
         spec = plan[sequence - 1]
         text = str(spec.get("speech_text") or "")
-        if project.production_mode != "whiteboard":
+        if project.production_mode == "video":
             text = _fit_speech_text(text, _project_durations(project)[sequence - 1])
         if not text.strip() or len(text) > 10000:
             raise HTTPException(422, "台词为空或过长")

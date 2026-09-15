@@ -43,7 +43,7 @@ Edge 流式返回的单词边界随音频一并保存；已知支持的 MiniMax 
 
 包含迁移 `20260915_0021`：`director_projects.postproduction`、`speech_jobs.timing`，
 以及允许 Edge SpeechJob 不绑定付费渠道。旧项目默认自动模式，旧字幕/已生成音频无需重做。
-上线需要先迁移，再一起更新 API 与 worker；本次实现没有自动部署。
+上线需要先迁移，再一起更新 API 与 worker。2026-09-15 已随 `3ffffe8` 部署并验证就绪。
 已有无渠道 Edge 任务时，降级迁移会拒绝操作，不会删除任务或伪造付费渠道绑定。
 
 ## 验证

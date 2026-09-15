@@ -254,7 +254,7 @@ async def _concat_shots(project: DirectorProject, shots: list[DirectorShot]) -> 
             "-t",
             str(
                 sum(float(shot.seconds) for shot in shots)
-                if getattr(project, "production_mode", "video") == "whiteboard"
+                if getattr(project, "production_mode", "video") in {"whiteboard", "image_motion"}
                 else project.target_seconds
             ),
             "-c",

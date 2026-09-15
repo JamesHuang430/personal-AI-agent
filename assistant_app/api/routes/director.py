@@ -94,11 +94,11 @@ async def upload_storyboard_image(
         )
         if project is None:
             raise HTTPException(404, "项目不存在")
-        if project.production_mode != "whiteboard" or project.status not in {
+        if project.production_mode not in {"whiteboard", "image_motion"} or project.status not in {
             "awaiting_storyboard",
             "failed",
         }:
-            raise HTTPException(409, "只能在白板分镜待确认或失败后上传替代图片")
+            raise HTTPException(409, "只能在本地合成项目分镜待确认或失败后上传替代图片")
         visual = await session.scalar(
             select(DirectorAgentRun).where(
                 DirectorAgentRun.project_id == project_id, DirectorAgentRun.agent_key == "visual"
@@ -393,11 +393,11 @@ class DirectorProjectCreatePayload(BaseModel):
     one_click: bool = False
     story_confirmed: bool = False
     use_memory: bool = True
-    production_mode: Literal["whiteboard", "video"] = "whiteboard"
+    production_mode: Literal["whiteboard", "image_motion", "video"] = "whiteboard"
 
 
 class DirectorDraftUpdate(BaseModel):
-    production_mode: Literal["whiteboard", "video"] | None = None
+    production_mode: Literal["whiteboard", "image_motion", "video"] | None = None
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     premise: str = Field(min_length=4, max_length=8000)
     target_seconds: Literal[4, 30, 60, 180, 300]

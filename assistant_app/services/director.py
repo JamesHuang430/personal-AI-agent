@@ -333,7 +333,7 @@ def _continuity_prompt(project: DirectorProject) -> str:
 
 
 def _project_durations(project):
-    if getattr(project, "production_mode", "video") == "whiteboard":
+    if getattr(project, "production_mode", "video") in {"whiteboard", "image_motion"}:
         return whiteboard_durations(project.target_seconds, project.one_click)
     return _shot_durations(project.target_seconds) if project.one_click else ["4"]
 
@@ -890,7 +890,7 @@ async def create_director_project(
     production_mode: str = "whiteboard",
     postproduction: dict | None = None,
 ) -> DirectorProject:
-    if production_mode not in {"whiteboard", "video"}:
+    if production_mode not in {"whiteboard", "image_motion", "video"}:
         raise ValueError("不支持的制作方式")
     from assistant_app.services.director_audio import AudioSettings, validate_audio_assets
     sound = AudioSettings.model_validate(postproduction or {})
@@ -934,7 +934,7 @@ async def create_director_project(
         storyboard_approved=False,
         one_click=one_click,
         planned_shots=(len(whiteboard_durations(target_seconds, one_click))
-                       if production_mode == "whiteboard"
+                       if production_mode in {"whiteboard", "image_motion"}
                        else len(_shot_durations(target_seconds)) if one_click else 1),
         status="queued" if story_confirmed else "awaiting_confirmation",
         current_stage="director" if story_confirmed else "story_confirmation",
@@ -1563,6 +1563,10 @@ async def _execute_agent_run(
         )
     if getattr(project, "production_mode", "video") == "whiteboard":
         system_prompt += WHITEBOARD_INSTRUCTIONS
+    elif project.production_mode == "image_motion":
+        from assistant_app.services.image_motion import IMAGE_MOTION_INSTRUCTIONS
+
+        system_prompt += IMAGE_MOTION_INSTRUCTIONS
     user_prompt = (
         f"项目：{project.title}\n故事创意：{project.premise}\n目标时长："
         f"{project.target_seconds} 秒\n画幅：{project.aspect_ratio}\n视觉风格："
@@ -1668,6 +1672,10 @@ async def _run_director_preflight(
     )
     if getattr(project, "production_mode", "video") == "whiteboard":
         system_prompt += WHITEBOARD_INSTRUCTIONS
+    elif project.production_mode == "image_motion":
+        from assistant_app.services.image_motion import IMAGE_MOTION_INSTRUCTIONS
+
+        system_prompt += IMAGE_MOTION_INSTRUCTIONS
     for attempt in range(1, DIRECTOR_PREFLIGHT_MAX_ATTEMPTS + 1):
         await emit_activity(runtime, f"总导演预演 · 第 {attempt} 轮", "processing", kind="review")
         phase = "全面审查并重写" if attempt == 1 else "复核上一版修订并做最终收敛"
@@ -1851,7 +1859,7 @@ async def _run_director_project(
             )
             return
 
-        if getattr(project, "production_mode", "video") == "whiteboard":
+        if getattr(project, "production_mode", "video") in {"whiteboard", "image_motion"}:
             await run_whiteboard_media(runtime, settings, project, media_run, quality_run)
             return
 
@@ -2064,8 +2072,8 @@ async def prepare_director_remaster(
         )
         if project is None:
             raise DirectorProjectNotFoundError("导演项目不存在")
-        if project.production_mode == "whiteboard":
-            raise DirectorProjectNotRemasterableError("白板项目暂不支持此动态视频重配音入口")
+        if project.production_mode in {"whiteboard", "image_motion"}:
+            raise DirectorProjectNotRemasterableError("本地合成项目暂不支持此动态视频重配音入口")
         if project.status != "completed" or not project.final_video_path:
             raise DirectorProjectNotRemasterableError("只有已完成的一键成片可以重新配音")
         shots = list(

@@ -65,9 +65,12 @@ async def ensure_shot(session, project, sequence, spec, seconds):
     )
     if shot:
         return shot
+    motion = project.production_mode == "image_motion"
     prompt = (
-        "Whiteboard illustration, white background, clear dark outlines, sparse flat colors, "
-        "no text, no watermark. "
+        ("Complete still illustration, keep subjects inside 10% safe margins, no text, "
+         "no watermark. " if motion else
+         "Whiteboard illustration, white background, clear dark outlines, sparse flat colors, "
+         "no text, no watermark. ")
         + str(spec.get("positive_prompt") or spec.get("action"))[:850]
         + "\nConsistent character design: "
         + json.dumps((project.continuity_bible or {}).get("characters", []), ensure_ascii=False)[
@@ -79,7 +82,7 @@ async def ensure_shot(session, project, sequence, spec, seconds):
         project_id=project.id,
         user_id=project.user_id,
         sequence=sequence,
-        title=str(spec.get("title") or f"白板第 {sequence} 镜")[:200],
+        title=str(spec.get("title") or f"{'图文' if motion else '白板'}第 {sequence} 镜")[:200],
         prompt=prompt,
         seconds=seconds,
         status="pending",
@@ -319,18 +322,21 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
         mix_project_music,
     )
 
+    motion = project.production_mode == "image_motion"
+    label = "图文动效" if motion else "白板"
     await _update_run(
         runtime,
         media_run.id,
         status="processing",
         error_message=None,
-        model_name="image channel + speech channel + local whiteboard/ffmpeg",
+        model_name=f"image channel + speech channel + local {project.production_mode}/ffmpeg",
     )
     await _update_project(runtime, project.id, current_stage="media", progress=40)
     # Fail before any paid submission when local dependencies or TTS configuration are absent.
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        raise RuntimeError("白板渲染需要服务器安装 FFmpeg 与 ffprobe，尚未提交付费媒体请求")
-    await _run_media_command(sys.executable, "-c", "import cv2, numpy, PIL")
+        raise RuntimeError("本地渲染需要服务器安装 FFmpeg 与 ffprobe，尚未提交付费媒体请求")
+    if not motion:
+        await _run_media_command(sys.executable, "-c", "import cv2, numpy, PIL")
     durations = whiteboard_durations(project.target_seconds, project.one_click)
     plan = await _load_storyboard_plan(runtime, project, len(durations))
     async with runtime.sessions() as session, session.begin():
@@ -379,24 +385,37 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
             await emit_activity(
                 runtime, f"第 {shot.sequence} 镜 · 旁白完成", "completed", kind="tool"
             )
-            annotation_state = await prepare_annotation(runtime, settings, project, shot, speech)
-            if not annotation_state.get("approved"):
-                needs_review = True
-                await _update_shot(runtime, shot.id, status="pending")
-                continue
+            if not motion:
+                annotation_state = await prepare_annotation(
+                    runtime, settings, project, shot, speech
+                )
+                if not annotation_state.get("approved"):
+                    needs_review = True
+                    await _update_shot(runtime, shot.id, status="pending")
+                    continue
             await emit_activity(
-                runtime, f"第 {shot.sequence} 镜 · 本地描线、上色与合成", "processing", kind="tool"
+                runtime, f"第 {shot.sequence} 镜 · 本地{label}合成", "processing", kind="tool"
             )
-            path, duration, audio_seconds = await render_shot(project, shot, speech)
+            if motion:
+                from assistant_app.services.image_motion import render_image_motion
+
+                path, duration, audio_seconds, alignment = await render_image_motion(
+                    project, shot, speech
+                )
+            else:
+                path, duration, audio_seconds = await render_shot(project, shot, speech)
+                alignment = annotation_state["annotation"]["subtitleAlignment"]
             shot.seconds = f"{duration:.3f}"
             shot.rendered_path = path
             shot.status = "completed"
             shot.continuity_snapshot = dict(shot.continuity_snapshot or {}) | {
                 "_media": {
-                    "audio_source": "whiteboard_tts",
+                    "audio_source": f"{project.production_mode}_tts",
                     "subtitle_start_seconds": 0,
                     "subtitle_end_seconds": audio_seconds,
-                    "subtitle_alignment": annotation_state["annotation"]["subtitleAlignment"],
+                    "subtitle_alignment": alignment,
+                    "motion_effect": ["push_in", "pull_out", "pan_right", "pan_left"][
+                        (shot.sequence - 1) % 4] if motion else None,
                     "single_speaker": True,
                     "image_path": Path(shot.image_path).name,
                 }
@@ -411,7 +430,7 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
             )
             completed.append(shot)
             await emit_activity(
-                runtime, f"第 {shot.sequence} 镜 · 白板合成完成", "completed", kind="tool"
+                runtime, f"第 {shot.sequence} 镜 · {label}合成完成", "completed", kind="tool"
             )
             await _update_project(
                 runtime,
@@ -461,13 +480,13 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
         runtime,
         media_run.id,
         status="completed",
-        decision_summary="白板产线完成：图片 + 旁白 + 本地描线和上色，无视频模型调用。",
+        decision_summary=f"{label}产线完成：图片 + 旁白 + 本地合成，无视频模型调用。",
         deliverable=(
-            f"已合成 {len(completed)} 幅白板场景，"
-            "字幕使用各镜已确认的时序（默认估算，可用 SRT 校正）。"
+            f"已合成 {len(completed)} 幅{label}场景，"
+            "字幕时间来源见各镜记录，需要人工观看复核。"
         ),
         result_data={
-            "production_mode": "whiteboard",
+            "production_mode": project.production_mode,
             "video_model_calls": 0,
             "completed_shots": len(completed),
             "final_video_path": final_path,
@@ -475,7 +494,9 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
     )
     await _update_run(runtime, quality_run.id, status="processing", error_message=None)
     report = await _build_quality_report(project, completed, final_path)
-    report["not_checked"] += ["semantic_drawing_order", "image_story_consistency"]
+    report["not_checked"] += ["image_story_consistency"]
+    if not motion:
+        report["not_checked"].append("semantic_drawing_order")
     await _update_project(runtime, project.id, quality_report=report)
     await _update_run(
         runtime,
@@ -486,7 +507,7 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
         result_data=report,
     )
     if not report["passed"]:
-        raise RuntimeError("白板技术检查失败：" + "；".join(report["issues"]))
+        raise RuntimeError(f"{label}技术检查失败：" + "；".join(report["issues"]))
     await _update_project(
         runtime,
         project.id,
@@ -495,7 +516,7 @@ async def run_whiteboard_media(runtime, settings, project, media_run, quality_ru
         progress=100,
         error_message=None,
         final_summary=(
-            f"白板成片完成：{len(completed)} 幅图片、旁白和字幕；"
+            f"{label}成片完成：{len(completed)} 幅图片、旁白和字幕；"
             "未调用视频模型。为完整保留旁白，实际时长可能略长于目标。"
         ),
     )

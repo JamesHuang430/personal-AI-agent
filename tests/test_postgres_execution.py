@@ -646,7 +646,10 @@ async def test_whiteboard_migration_preserves_existing_project_mode(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("edge", [False, True])
-async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path, monkeypatch, edge):
+@pytest.mark.parametrize("mode", ["whiteboard", "image_motion"])
+async def test_whiteboard_upload_ownership_and_real_media_pipeline(
+    db, tmp_path, monkeypatch, edge, mode
+):
     import io
     import wave
     from unittest.mock import AsyncMock
@@ -662,7 +665,13 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
         SpeechChannel,
         SpeechJob,
     )
-    from assistant_app.services import director, director_media, image_gateway, whiteboard
+    from assistant_app.services import (
+        director,
+        director_media,
+        image_gateway,
+        image_motion,
+        whiteboard,
+    )
 
     runtime, _ = db
     user = await seed(runtime)
@@ -675,7 +684,7 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
         else {},
         premise="介绍太阳与树木",
         visual_style="白板",
-        production_mode="whiteboard",
+        production_mode=mode,
         target_seconds=4,
         one_click=True,
         planned_shots=1,
@@ -716,7 +725,7 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
                 is_active=True,
             )
         )
-    for module in (routes, director_media, whiteboard, image_gateway):
+    for module in (routes, director_media, whiteboard, image_gateway, image_motion):
         monkeypatch.setattr(module, "GENERATED_ROOT", tmp_path)
     monkeypatch.setattr(director, "read_activity", AsyncMock(return_value=[]))
     # Only model-independent fixture artwork and synthetic audio are used by this test.
@@ -740,11 +749,14 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
     )
     assert uploaded["storyboard_hash"] != previous
 
+    speech_calls = []
+
     async def fake_speech(runtime, settings, job_id):
+        speech_calls.append(job_id)
         path = tmp_path / f"{job_id}.wav"
         with wave.open(str(path), "wb") as wav:
             wav.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
-            wav.writeframes(b"\x00\x00" * 24000)
+            wav.writeframes(b"\x00\x00" * 24000 * (6 if mode == "image_motion" else 1))
         async with runtime.sessions() as session, session.begin():
             speech = await session.get(SpeechJob, job_id)
             speech.status, speech.storage_path = "completed", str(path)
@@ -758,7 +770,35 @@ async def test_whiteboard_upload_ownership_and_real_media_pipeline(db, tmp_path,
     monkeypatch.setattr(whiteboard, "run_speech_job", fake_speech)
     paid = AsyncMock(side_effect=AssertionError("No paid video calls allowed"))
     monkeypatch.setattr(director, "run_video_job", paid)
-    await whiteboard.run_whiteboard_media(runtime, None, project, runs[2], runs[3])
+    if mode == "image_motion":
+        monkeypatch.setattr(director, "_execute_agent_run", AsyncMock())
+        monkeypatch.setattr(director, "_run_director_preflight", AsyncMock())
+        await director._run_director_project(runtime, None, project.id)
+        assert not speech_calls  # Approval gate is respected before any media request.
+        await director.approve_storyboard(
+            runtime, user.id, project.id, uploaded["storyboard_hash"]
+        )
+        await director._run_director_project(runtime, None, project.id)
+    else:
+        await whiteboard.run_whiteboard_media(runtime, None, project, runs[2], runs[3])
+    if mode == "image_motion":
+        async with runtime.sessions() as session:
+            result = await session.get(DirectorProject, project.id)
+            shot = await session.scalar(
+                select(DirectorShot).where(DirectorShot.project_id == project.id)
+            )
+            assert result.status == "completed" and result.quality_report["passed"]
+            assert result.quality_report["final"]["duration_seconds"] > 6
+            assert result.quality_report["final"]["audio"]
+            assert shot.video_job_id is None and shot.image_submission_started_at is None
+            assert shot.continuity_snapshot["_media"]["subtitle_alignment"] == (
+                "provider" if edge else "estimated"
+            )
+            assert "_whiteboard" not in shot.continuity_snapshot
+        await whiteboard.run_whiteboard_media(runtime, None, result, runs[2], runs[3])
+        assert len(speech_calls) == 1  # Retry reuses completed media, no extra TTS.
+        paid.assert_not_awaited()
+        return
     from assistant_app.services.whiteboard_annotations import annotation_digest
 
     async with runtime.sessions() as session:

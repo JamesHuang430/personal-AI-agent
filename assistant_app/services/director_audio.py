@@ -84,7 +84,7 @@ def speech_options(project, spec):
         }
     from assistant_app.services.director import _voice_id_for_spec, _voice_role_for_spec
 
-    if project.production_mode == "whiteboard":
+    if project.production_mode in {"whiteboard", "image_motion"}:
         return {
             "voice_id": None,
             "speed": config.speed,

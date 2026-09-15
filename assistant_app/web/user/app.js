@@ -1250,7 +1250,9 @@ function renderDirectorProject(project) {
       ? '素材已保存。逐镜检查分区、保护区和字幕时间，确认后才正式渲染；不会调用视频模型。'
       : project.production_mode === 'whiteboard'
         ? '先核对本片采用的偏好、故事和逐镜对白。确认后准备图片与旁白，之后还需确认分区。'
-        : '先核对本片采用的偏好、故事和逐镜对白，确认后开始生成视频。';
+        : project.production_mode === 'image_motion'
+          ? '核对故事和旁白，可先上传自有图片。确认后自动生成图文动效，不调用视频模型。'
+          : '先核对本片采用的偏好、故事和逐镜对白，确认后开始生成视频。';
   }
   $('#project-settings').textContent = project.status === 'awaiting_confirmation' ? '编辑草案' : '以此新建一版';
 
@@ -1297,7 +1299,12 @@ async function loadCreativePreferences() {
 
 const preferenceLabels = {visual_style: '视觉', audience: '受众', narrative_tone: '叙事', pacing: '节奏', sound: '声音与字幕', avoid: '避免'};
 
+function isLocalDirectorMode(mode) {
+  return mode === 'whiteboard' || mode === 'image_motion';
+}
+
 function renderCreativeContext(project) {
+  const localMode = isLocalDirectorMode(project.production_mode);
   const snapshot = project.personalization || {};
   const explicit = Object.entries(snapshot.preferences || {})
     .filter(([key, value]) => preferenceLabels[key] && value)
@@ -1306,9 +1313,9 @@ function renderCreativeContext(project) {
   const context = $('#project-personalization');
   context.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = `${project.production_mode === 'whiteboard' ? '白板手绘 · 图片 + 旁白 + 本地合成（无视频模型）' : '动态视频渠道'}。本次创意与制作设定优先；以下是规划时的参考快照。`;
+  note.textContent = `${localMode ? (project.production_mode === 'image_motion' ? '图文动效 · 图片推拉平移 + 旁白（无视频模型）' : '白板手绘 · 图片 + 旁白 + 本地合成（无视频模型）') : '动态视频渠道'}。本次创意与制作设定优先；以下是规划时的参考快照。`;
   context.append(note);
-  if (project.production_mode === 'whiteboard') {
+  if (localMode) {
     const readiness = document.createElement('p');
     readiness.textContent = '正在检查图片和语音渠道配置…'; context.append(readiness);
     api('/director/whiteboard-readiness').then(state => {
@@ -1349,8 +1356,10 @@ function renderCreativeContext(project) {
     ? '渲染前核对图片与分区' : '生成前核对故事与分镜';
   panel.querySelector('p').textContent = project.production_mode === 'whiteboard'
     ? '先确认故事以准备图片与旁白，再逐镜保存分区标注，最后确认正式渲染。全程不调用视频模型。'
-    : '核对下方故事、逐镜画面和对白；确认后才提交视频任务。需要修改可保存为新草案。';
-  panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard' && !(project.production_mode === 'whiteboard' && project.status === 'failed'));
+    : project.production_mode === 'image_motion'
+      ? '核对分镜并可上传自有图片；确认后准备图片、旁白，再自动合成推拉平移动效，不调用视频模型。建议先做首镜预览；不需要白板分区标注。'
+      : '核对下方故事、逐镜画面和对白；确认后才提交视频任务。需要修改可保存为新草案。';
+  panel.classList.toggle('hidden', project.status !== 'awaiting_storyboard' && !(localMode && project.status === 'failed'));
   $('#approve-storyboard-btn').classList.toggle('hidden', project.status !== 'awaiting_storyboard');
   const story = project.agents?.find(item => item.agent === 'story')?.result_data || {};
   $('#storyboard-review-content').innerHTML = `<p>${escapeHtml(story.script || project.premise)}</p>`
@@ -1359,9 +1368,9 @@ function renderCreativeContext(project) {
       <p>${escapeHtml(shot.positive_prompt || shot.action || '')}</p>
       <p>对白：${escapeHtml(shot.speech_text || '')}</p>
       <p>字幕：${escapeHtml(shot.subtitle_text || shot.speech_text || '')}</p>
-      ${project.production_mode === 'whiteboard' ? `<label>可选：上传此镜图片，跳过付费生图 <input type="file" accept="image/png,image/jpeg,image/webp" data-whiteboard-upload="${index + 1}"></label><small>PNG / JPEG / WebP，最多 12 MB。图片与旁白准备后需确认分区标注；字幕优先用渠道时间戳，缺失时估算。</small>` : ''}
+      ${localMode ? `<label>可选：上传此镜图片，跳过付费生图 <input type="file" accept="image/png,image/jpeg,image/webp" data-whiteboard-upload="${index + 1}"></label><small>PNG / JPEG / WebP，最多 12 MB。${project.production_mode === 'whiteboard' ? '图片与旁白准备后需确认分区标注；' : '动效可能轻微裁切边缘，主体请留安全区；'}字幕优先用渠道时间戳，缺失时估算。</small>` : ''}
     </article>`).join('');
-  if (project.production_mode === 'whiteboard') {
+  if (localMode) {
     $('#storyboard-review-content').querySelectorAll('[data-whiteboard-upload]').forEach(input => {
       const sequence = Number(input.dataset.whiteboardUpload);
       const saved = project.shots?.find(item => item.sequence === sequence);
@@ -1382,7 +1391,8 @@ function renderCreativeContext(project) {
   }
   $('#approve-storyboard-btn').textContent = project.current_stage === 'whiteboard_annotation_review'
     ? '确认全部分区并正式渲染（无视频模型）'
-    : project.production_mode === 'whiteboard' ? '确认分镜，准备图片与旁白' : '确认分镜并生成';
+    : project.production_mode === 'whiteboard' ? '确认分镜，准备图片与旁白'
+      : project.production_mode === 'image_motion' ? '确认分镜并合成图文动效（无视频模型）' : '确认分镜并生成';
 }
 
 $('#project-sound').addEventListener('click', () => {
@@ -1765,7 +1775,7 @@ $('#approve-storyboard-btn').addEventListener('click', async () => {
       method: 'POST', body: JSON.stringify({storyboard_hash: project.storyboard_hash}),
     });
     if (activeDirectorProject?.id === result.id) renderDirectorProject(result);
-    notify(project.production_mode === 'whiteboard' ? '已确认，将继续白板素材准备或本地渲染，不调用视频模型。' : '已确认这版分镜，视频任务即将开始。');
+    notify(isLocalDirectorMode(project.production_mode) ? '已确认，将继续图片与旁白准备或本地渲染，不调用视频模型。' : '已确认这版分镜，视频任务即将开始。');
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 });
@@ -1843,7 +1853,7 @@ function showDirectorStart(oneClick = false, sourceProject = null, edit = false)
   const title = $('#director-start-dialog h2');
   title.textContent = oneClick ? '一键成片' : '开始制作电影';
   $('#director-start-intro').textContent = oneClick
-    ? '选择白板手绘或动态视频，确认故事与分镜后，再逐镜制作并合成为 MP4。'
+    ? '选择白板手绘、图文动效或动态视频，确认故事与分镜后，再逐镜制作并合成为 MP4。'
     : '确认故事和分镜后，先制作一个带旁白和字幕的预览镜头。';
   $('#director-style').value = creativePreferences.visual_style || '';
   $('#director-use-memory').checked = creativePreferences.use_memory !== false;
@@ -1871,11 +1881,13 @@ function showDirectorStart(oneClick = false, sourceProject = null, edit = false)
 function updateDirectorModeSummary() {
   const seconds = Number($('#director-duration').value);
   const resolution = $('#director-resolution').value;
-  const whiteboard = $('#director-production-mode').value === 'whiteboard';
-  const estimatedShots = Math.ceil(seconds / (whiteboard ? 35 : 12));
+  const mode = $('#director-production-mode').value;
+  const whiteboard = mode === 'whiteboard';
+  const localMode = isLocalDirectorMode(mode);
+  const estimatedShots = Math.ceil(seconds / (localMode ? 35 : 12));
   const requireStoryConfirmation = $('#director-confirm-story').checked;
-  $('#director-resolution').options[0].textContent = whiteboard ? '标准 · 720×1280 / 1280×720' : '768P（视频渠道）';
-  $('#director-resolution').options[1].textContent = whiteboard ? '高清 · 1024×1792 / 1792×1024' : '2K（视频渠道）';
+  $('#director-resolution').options[0].textContent = localMode ? '标准 · 720×1280 / 1280×720' : '768P（视频渠道）';
+  $('#director-resolution').options[1].textContent = localMode ? '高清 · 1024×1792 / 1792×1024' : '2K（视频渠道）';
   const panel = $('#director-start-boundary');
   panel.classList.toggle('one-click', directorOneClickMode);
   panel.querySelector('strong').textContent = directorOneClickMode ? '一键成片 · 额度确认' : '常规制作 · 先看预览';
@@ -1888,7 +1900,9 @@ function updateDirectorModeSummary() {
     : (directorOneClickMode ? `立即预演并准备约 ${estimatedShots} 个镜头` : '立即启动总导演文本预演');
   panel.querySelector('span').textContent += whiteboard
     ? '白板方式：每镜一幅图，描线、上色、旁白和字幕；生图与配音可能收费，本地合成不调用视频模型。分镜确认前可上传自有图片；失败不自动切换动态视频。'
-    : '动态视频方式：分镜确认后按视频渠道计费；不会自动改变制作方式。';
+    : mode === 'image_motion'
+      ? '图文动效：完整图片轻微推近、拉远或平移，配旁白、字幕与淡入淡出；不是真实角色运动。可上传自有图片，生图与配音可能收费，本地合成不调用视频模型。'
+      : '动态视频方式：分镜确认后按视频渠道计费；不会自动改变制作方式。';
   if (editingDirectorDraft) $('#director-start-submit').textContent = '保存草案修改';
 }
 
@@ -2150,10 +2164,12 @@ function settleDirectorApproval(approved) {
 function showDirectorApproval({ title, premise, resolution, estimatedShots, production_mode = 'video' }) {
   $('#director-approval-title').textContent = title;
   $('#director-approval-story').textContent = premise;
-  $('#director-approval-video-label').textContent = production_mode === 'whiteboard' ? '白板手绘 · 本地合成' : `通过后以 ${resolution} 生成视频`;
+  $('#director-approval-video-label').textContent = production_mode === 'whiteboard' ? '白板手绘 · 本地合成' : production_mode === 'image_motion' ? '图文动效 · 本地合成' : `通过后以 ${resolution} 生成视频`;
   $('#director-approval-video-detail').textContent = production_mode === 'whiteboard'
     ? `约 ${estimatedShots} 幅图片与旁白；图片及分区需再确认，不调用视频模型`
-    : `预计调用视频模型生成约 ${estimatedShots} 个镜头`;
+    : production_mode === 'image_motion'
+      ? `约 ${estimatedShots} 幅图片与旁白；分镜确认后自动合成动效，不调用视频模型`
+      : `预计调用视频模型生成约 ${estimatedShots} 个镜头`;
   const dialog = $('#director-approval-dialog');
   if (dialog.open) dialog.close();
   dialog.showModal();
@@ -2180,7 +2196,7 @@ $('#continue-production').addEventListener('click', async () => {
   if (awaitingConfirmation) {
     button.disabled = true;
     const estimatedShots = activeDirectorProject.one_click
-      ? Math.ceil(activeDirectorProject.target_seconds / (activeDirectorProject.production_mode === 'whiteboard' ? 35 : 12))
+      ? Math.ceil(activeDirectorProject.target_seconds / (isLocalDirectorMode(activeDirectorProject.production_mode) ? 35 : 12))
       : 1;
     const confirmed = await showDirectorApproval({
       title: '确认故事并开始预演',
@@ -2291,15 +2307,15 @@ $('#director-confirm-story').addEventListener('change', updateDirectorModeSummar
 $('#director-start-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const seconds = Number($('#director-duration').value);
-  const whiteboard = $('#director-production-mode').value === 'whiteboard';
-  const estimatedShots = Math.ceil(seconds / (whiteboard ? 35 : 12));
+  const productionMode = $('#director-production-mode').value;
+  const estimatedShots = Math.ceil(seconds / (isLocalDirectorMode(productionMode) ? 35 : 12));
   const resolution = $('#director-resolution').value;
   const requireStoryConfirmation = $('#director-confirm-story').checked;
   if (!requireStoryConfirmation && directorOneClickMode) {
     const confirmed = await showDirectorApproval({
       title: '确认跳过故事复核并开始预演',
       premise: $('#director-premise').value.trim(),
-      production_mode: whiteboard ? 'whiteboard' : 'video',
+      production_mode: productionMode,
       resolution,
       estimatedShots,
     });

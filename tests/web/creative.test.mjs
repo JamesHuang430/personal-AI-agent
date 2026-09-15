@@ -110,6 +110,30 @@ test('new projects default to whiteboard and old projects preserve their video m
   } finally {dom.window.close();}
 });
 
+test('image motion is distinct from video and preserves its mode on create and edit', async () => {
+  const {w,dom,calls,project}=await setup();
+  try {
+    w.showDirectorStart(true);
+    const select=w.document.querySelector('#director-production-mode');
+    select.value='image_motion'; select.dispatchEvent(new w.Event('change'));
+    assert.match(w.document.querySelector('#director-start-boundary').textContent,/不调用视频模型/);
+    assert.match(w.document.querySelector('#director-start-boundary').textContent,/推近/);
+    w.document.querySelector('#director-premise').value='介绍光合作用';
+    w.document.querySelector('#director-start-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+    await tick();
+    const request=calls.find(c=>c.url.endsWith('/director/projects') && c.options.method==='POST');
+    assert.equal(JSON.parse(request.options.body).production_mode,'image_motion');
+    project.production_mode='image_motion';
+    w.showDirectorStart(true,project,true);
+    assert.equal(select.value,'image_motion');
+    w.renderDirectorProject(project);
+    assert.equal(w.document.querySelectorAll('[data-whiteboard-upload]').length,1);
+    assert.equal(w.document.querySelectorAll('[data-whiteboard-editor]').length,0);
+    assert.match(w.document.querySelector('#approve-storyboard-btn').textContent,/图文动效/);
+    assert.match(w.document.querySelector('#storyboard-review-panel').textContent,/不需要白板分区标注/);
+  } finally {dom.window.close();}
+});
+
 test('storyboard approval submits the displayed digest and escapes creative memory', async () => {
   const {w,dom,calls,project}=await setup();
   try {

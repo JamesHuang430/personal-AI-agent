@@ -91,7 +91,7 @@ async def _build_quality_report(
             expected = (
                 sum(float(shot.seconds) for shot in shots)
                 if not project.one_click
-                or getattr(project, "production_mode", "video") == "whiteboard"
+                or getattr(project, "production_mode", "video") in {"whiteboard", "image_motion"}
                 else project.target_seconds
             )
             if abs(duration - expected) > 1.5:
